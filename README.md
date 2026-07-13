@@ -144,14 +144,15 @@ are not mechanical transcription:
 2. *Reduction* is a global **trace-block commutation** argument
    (`Pre`/`Post`/`Finish` decomposition, Diamond / Iterative Diamond /
    Post-Commit Termination). Its entire **mover-theoretic layer** is now
-   mechanized in `Reduction.lean`, for the store-touching action/action cases,
-   all discharged from `Valid M`: `right_commute_state` (Right Commutativity,
-   validity (1)), `left_commute_state` (Left Commutativity, validity (2)),
-   `diamond_parallel` (the Diamond lemma, validity (4)), and `indep_commute`
-   (the store-preserving cases, no validity needed). What remains is the
-   surrounding *combinatorial* structure: the `I-if` variants, Iterative
-   Diamond, Post-Commit Termination (which invokes Preservation), and the
-   block-decomposition induction on `→*` — a large separate development.
+   mechanized in `Reduction.lean`, for every step kind, all discharged from
+   `Valid M`: `right_commute_state` (Right Commutativity, validity (1)),
+   `left_commute_state` (Left Commutativity, validity (2)), `diamond_parallel`
+   (the Diamond lemma, validity (4)), and `indep_commute` (the store-preserving
+   cases, no validity needed). The store-touching lemmas are stated over
+   *action-like* steps (`ActionLike`), so a single proof covers both `I-action`
+   and `I-if`. What remains is purely *combinatorial* (no more mover theory):
+   Iterative Diamond, Post-Commit Termination (which invokes Preservation), and
+   the block-decomposition induction on `→*` — a large separate development.
 
 So the honest status is: the **entire chain is assembled, every logic-level
 structural lemma is mechanized, and the mover-theoretic engines of both hard

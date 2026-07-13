@@ -45,36 +45,65 @@ theorem set_comm {α} (l : List α) {i j : Nat} (x y : α) (h : i ≠ j) :
   simp only [List.getElem?_set, List.length_set]
   by_cases hik : i = k <;> by_cases hjk : j = k <;> simp_all
 
-/-! ### The commutativity diamond (state level), action/action case
+/-! ### Action-like steps
 
-The shared core.  Given two `I-action` steps of threads `i ≠ j` (`i` from `σ`
-to `σ'`, then `j` from `σ'` to `σ''`), *any* store swap `σ'''` witnessing that
-the two store transitions commute (`Aⱼ j σ σ'''` and `Aᵢ i σ''' σ''`) plus the
-bound `M(Aᵢ,i,σ) ⊑ N` yields the full instrumented-state diamond: the phase
-updates and thread-list bookkeeping all reconcile, via `Valid M` condition (3).
-Right and Left Commutativity below just supply the store swap from validity
-condition (1) resp. (2). -/
+Both `I-action` and (non-erroring) `I-if` steps have the same shape: from a
+store where an underlying action `A` fires, thread `t` steps `redex → result`,
+updating the store via `A` and the phase by `p ;; M(A,t,σ)`.  Abstracting this
+lets the commutation lemmas cover the conditional cases as well, uniformly. -/
+
+/-- `t`'s next step is action-like via `A`, rewriting `redex` to `result`. -/
+def ActionLike (M : MoverSpec) (D : BodyEnv) (t : Tid)
+    (redex result : Stmt) (A : Action) (p : Phase) : Prop :=
+  ∀ τ τ', A t τ τ' → p ;; M A t τ ≠ Effect.E →
+    IThreadStep M D t redex τ p result τ' (p ;; M A t τ)
+
+theorem actionLike_action {M : MoverSpec} {D : BodyEnv} {t : Tid}
+    {E : Ctx} {A : Action} {p : Phase} :
+    ActionLike M D t (E.plug (.act A)) (E.plug .skip) A p :=
+  fun τ τ' hA hne => IThreadStep.iaction_ok E A τ τ' p hA hne
+
+theorem actionLike_ite_tru {M : MoverSpec} {D : BodyEnv} {t : Tid}
+    {E : Ctx} {C : CondAction} {s1 s2 : Stmt} {p : Phase} :
+    ActionLike M D t (E.plug (.ite C s1 s2)) (E.plug s1) C.tru p :=
+  fun τ τ' hA hne => IThreadStep.iif_ok_T E C s1 s2 τ τ' p hA hne
+
+theorem actionLike_ite_fls {M : MoverSpec} {D : BodyEnv} {t : Tid}
+    {E : Ctx} {C : CondAction} {s1 s2 : Stmt} {p : Phase} :
+    ActionLike M D t (E.plug (.ite C s1 s2)) (E.plug s2) C.fls p :=
+  fun τ τ' hA hne => IThreadStep.iif_ok_F E C s1 s2 τ τ' p hA hne
+
+/-! ### The commutativity diamond (state level)
+
+The shared core, now over action-*like* steps (so it covers `I-action` and
+`I-if` uniformly).  Given action-like steps of threads `i ≠ j` (`i` from `σ` to
+`σ'`, then `j` from `σ'` to `σ''`), *any* store swap `σ'''` witnessing that the
+two store transitions commute (`Aⱼ j σ σ'''` and `Aᵢ i σ''' σ''`) plus the bound
+`M(Aᵢ,i,σ) ⊑ N` yields the full instrumented-state diamond: the phase updates
+and thread-list bookkeeping all reconcile via `Valid M` condition (3).  Right and
+Left Commutativity below supply the store swap from validity condition (1)
+resp. (2). -/
 
 theorem diamond_core {M : MoverSpec} {D : BodyEnv} (hV : Valid M)
     {ths : List (Stmt × Phase)} {σ σ' σ'' σ''' : Store} {i j : Tid}
-    {Ei Ej : Ctx} {Ai Aj : Action} {pi pj : Phase}
+    {ri ri' rj rj' : Stmt} {Ai Aj : Action} {pi pj : Phase}
     (hij : i ≠ j)
-    (hi : ths[i]? = some (Ei.plug (.act Ai), pi))
-    (hj : ths[j]? = some (Ej.plug (.act Aj), pj))
+    (hi : ths[i]? = some (ri, pi))
+    (hj : ths[j]? = some (rj, pj))
+    (ali : ActionLike M D i ri ri' Ai pi)
+    (alj : ActionLike M D j rj rj' Aj pj)
     (hmiN : M Ai i σ ⊑ Effect.N)
     (hAi : Ai i σ σ') (hnei : pi ;; M Ai i σ ≠ Effect.E)
     (hAj : Aj j σ' σ'') (hnej : pj ;; M Aj j σ' ≠ Effect.E)
     (hAjσ : Aj j σ σ''') (hAiσ''' : Ai i σ''' σ'') :
     -- left path: i then j
-    IStep M D ⟨ths, σ⟩ ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩ ∧
-    IStep M D ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩
-            ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-                (Ej.plug .skip, pj ;; M Aj j σ'), σ''⟩ ∧
+    IStep M D ⟨ths, σ⟩ ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩ ∧
+    IStep M D ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩
+            ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', pj ;; M Aj j σ'), σ''⟩ ∧
     -- right path: j then i, reaching the SAME final state
-    IStep M D ⟨ths, σ⟩ ⟨ths.set j (Ej.plug .skip, pj ;; M Aj j σ), σ'''⟩ ∧
-    IStep M D ⟨ths.set j (Ej.plug .skip, pj ;; M Aj j σ), σ'''⟩
-            ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-                (Ej.plug .skip, pj ;; M Aj j σ'), σ''⟩ := by
+    IStep M D ⟨ths, σ⟩ ⟨ths.set j (rj', pj ;; M Aj j σ), σ'''⟩ ∧
+    IStep M D ⟨ths.set j (rj', pj ;; M Aj j σ), σ'''⟩
+            ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', pj ;; M Aj j σ'), σ''⟩ := by
   have hmjN' : M Aj j σ' ⊑ Effect.N := le_N_of_ne_E (seq_arg_ne_E hnej)
   -- effect invariances from validity (3)
   have heffj : M Aj j σ' = M Aj j σ :=
@@ -87,84 +116,77 @@ theorem diamond_core {M : MoverSpec} {D : BodyEnv} (hV : Valid M)
   have hneiσ''' : pi ;; M Ai i σ''' ≠ Effect.E := by rw [heffi]; exact hnei
   refine ⟨?_, ?_, ?_, ?_⟩
   · -- L1
-    exact IStep.mk ths i _ _ σ σ' pi _ hi (IThreadStep.iaction_ok Ei Ai σ σ' pi hAi hnei)
+    exact IStep.mk ths i _ _ σ σ' pi _ hi (ali σ σ' hAi hnei)
   · -- L2
-    have hgetj : (ths.set i (Ei.plug .skip, pi ;; M Ai i σ))[j]? =
-        some (Ej.plug (.act Aj), pj) := by rw [getElem?_set_ne _ _ hij]; exact hj
-    exact IStep.mk _ j _ _ σ' σ'' pj _ hgetj (IThreadStep.iaction_ok Ej Aj σ' σ'' pj hAj hnej)
+    have hgetj : (ths.set i (ri', pi ;; M Ai i σ))[j]? = some (rj, pj) := by
+      rw [getElem?_set_ne _ _ hij]; exact hj
+    exact IStep.mk _ j _ _ σ' σ'' pj _ hgetj (alj σ' σ'' hAj hnej)
   · -- R1
-    exact IStep.mk ths j _ _ σ σ''' pj _ hj (IThreadStep.iaction_ok Ej Aj σ σ''' pj hAjσ hnejσ)
+    exact IStep.mk ths j _ _ σ σ''' pj _ hj (alj σ σ''' hAjσ hnejσ)
   · -- R2, reaching the same final list
-    have hgeti : (ths.set j (Ej.plug .skip, pj ;; M Aj j σ))[i]? =
-        some (Ei.plug (.act Ai), pi) := by
+    have hgeti : (ths.set j (rj', pj ;; M Aj j σ))[i]? = some (ri, pi) := by
       rw [getElem?_set_ne _ _ (Ne.symm hij)]; exact hi
-    have step : IStep M D ⟨ths.set j (Ej.plug .skip, pj ;; M Aj j σ), σ'''⟩
-        ⟨(ths.set j (Ej.plug .skip, pj ;; M Aj j σ)).set i
-            (Ei.plug .skip, pi ;; M Ai i σ'''), σ''⟩ :=
-      IStep.mk (ths.set j (Ej.plug .skip, pj ;; M Aj j σ)) i _ _ σ''' σ'' pi _
-        hgeti (IThreadStep.iaction_ok Ei Ai σ''' σ'' pi hAiσ''' hneiσ''')
+    have step : IStep M D ⟨ths.set j (rj', pj ;; M Aj j σ), σ'''⟩
+        ⟨(ths.set j (rj', pj ;; M Aj j σ)).set i (ri', pi ;; M Ai i σ'''), σ''⟩ :=
+      IStep.mk (ths.set j (rj', pj ;; M Aj j σ)) i _ _ σ''' σ'' pi _
+        hgeti (ali σ''' σ'' hAiσ''' hneiσ''')
     have hfin :
-        (ths.set j (Ej.plug .skip, pj ;; M Aj j σ)).set i (Ei.plug .skip, pi ;; M Ai i σ''')
-        = (ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j (Ej.plug .skip, pj ;; M Aj j σ') := by
+        (ths.set j (rj', pj ;; M Aj j σ)).set i (ri', pi ;; M Ai i σ''')
+        = (ths.set i (ri', pi ;; M Ai i σ)).set j (rj', pj ;; M Aj j σ') := by
       rw [heffi, heffj]
       exact (set_comm ths _ _ hij).symm
-    have : (⟨(ths.set j (Ej.plug .skip, pj ;; M Aj j σ)).set i
-              (Ei.plug .skip, pi ;; M Ai i σ'''), σ''⟩ : IState)
-        = ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-              (Ej.plug .skip, pj ;; M Aj j σ'), σ''⟩ := by rw [hfin]
+    have : (⟨(ths.set j (rj', pj ;; M Aj j σ)).set i (ri', pi ;; M Ai i σ'''), σ''⟩ : IState)
+        = ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', pj ;; M Aj j σ'), σ''⟩ := by rw [hfin]
     exact this ▸ step
 
-/-- **Right Commutativity** (state level, action/action).  A right-mover action
-    step of thread `i` (`M(A_i,i,σ) ⊑ R`) commutes past any non-erroring action
-    step of thread `j ≠ i`.  Store swap from validity condition (1). -/
+/-- **Right Commutativity** (state level).  A right-mover action-like step of
+    thread `i` (`M(A_i,i,σ) ⊑ R`) commutes past any non-erroring action-like step
+    of thread `j ≠ i`.  Store swap from validity condition (1).  Covers both
+    `I-action` and `I-if` (choose the `ActionLike` witness accordingly). -/
 theorem right_commute_state {M : MoverSpec} {D : BodyEnv} (hV : Valid M)
     {ths : List (Stmt × Phase)} {σ σ' σ'' : Store} {i j : Tid}
-    {Ei Ej : Ctx} {Ai Aj : Action} {pi pj : Phase}
+    {ri ri' rj rj' : Stmt} {Ai Aj : Action} {pi pj : Phase}
     (hij : i ≠ j)
-    (hi : ths[i]? = some (Ei.plug (.act Ai), pi))
-    (hj : ths[j]? = some (Ej.plug (.act Aj), pj))
+    (hi : ths[i]? = some (ri, pi)) (hj : ths[j]? = some (rj, pj))
+    (ali : ActionLike M D i ri ri' Ai pi) (alj : ActionLike M D j rj rj' Aj pj)
     (hmi : M Ai i σ ⊑ Effect.R)
     (hAi : Ai i σ σ') (hnei : pi ;; M Ai i σ ≠ Effect.E)
     (hAj : Aj j σ' σ'') (hnej : pj ;; M Aj j σ' ≠ Effect.E) :
     ∃ σ''' : Store,
-      IStep M D ⟨ths, σ⟩ ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩ ∧
-      IStep M D ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩
-              ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-                  (Ej.plug .skip, pj ;; M Aj j σ'), σ''⟩ ∧
-      IStep M D ⟨ths, σ⟩ ⟨ths.set j (Ej.plug .skip, pj ;; M Aj j σ), σ'''⟩ ∧
-      IStep M D ⟨ths.set j (Ej.plug .skip, pj ;; M Aj j σ), σ'''⟩
-              ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-                  (Ej.plug .skip, pj ;; M Aj j σ'), σ''⟩ := by
+      IStep M D ⟨ths, σ⟩ ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩ ∧
+      IStep M D ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩
+              ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', pj ;; M Aj j σ'), σ''⟩ ∧
+      IStep M D ⟨ths, σ⟩ ⟨ths.set j (rj', pj ;; M Aj j σ), σ'''⟩ ∧
+      IStep M D ⟨ths.set j (rj', pj ;; M Aj j σ), σ'''⟩
+              ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', pj ;; M Aj j σ'), σ''⟩ := by
   have hmiN : M Ai i σ ⊑ Effect.N := le_trans hmi (by decide)
   have hmjN' : M Aj j σ' ⊑ Effect.N := le_N_of_ne_E (seq_arg_ne_E hnej)
   obtain ⟨σ''', hAjσ, hAiσ'''⟩ := hV.right i j Ai Aj σ σ' σ'' hij hmi hAi hmjN' hAj
-  exact ⟨σ''', diamond_core hV hij hi hj hmiN hAi hnei hAj hnej hAjσ hAiσ'''⟩
+  exact ⟨σ''', diamond_core hV hij hi hj ali alj hmiN hAi hnei hAj hnej hAjσ hAiσ'''⟩
 
-/-- **Left Commutativity** (state level, action/action).  A left-mover action
-    step of thread `j` (`M(A_j,j,σ') ⊑ L`), taken *after* a non-erroring action
-    step of thread `i ≠ j`, commutes to *before* it.  Store swap from validity
+/-- **Left Commutativity** (state level).  A left-mover action-like step of
+    thread `j` (`M(A_j,j,σ') ⊑ L`), taken *after* a non-erroring action-like step
+    of thread `i ≠ j`, commutes to *before* it.  Store swap from validity
     condition (2).  Same diamond as Right Commutativity, different witness. -/
 theorem left_commute_state {M : MoverSpec} {D : BodyEnv} (hV : Valid M)
     {ths : List (Stmt × Phase)} {σ σ' σ'' : Store} {i j : Tid}
-    {Ei Ej : Ctx} {Ai Aj : Action} {pi pj : Phase}
+    {ri ri' rj rj' : Stmt} {Ai Aj : Action} {pi pj : Phase}
     (hij : i ≠ j)
-    (hi : ths[i]? = some (Ei.plug (.act Ai), pi))
-    (hj : ths[j]? = some (Ej.plug (.act Aj), pj))
+    (hi : ths[i]? = some (ri, pi)) (hj : ths[j]? = some (rj, pj))
+    (ali : ActionLike M D i ri ri' Ai pi) (alj : ActionLike M D j rj rj' Aj pj)
     (hmj : M Aj j σ' ⊑ Effect.L)
     (hAi : Ai i σ σ') (hnei : pi ;; M Ai i σ ≠ Effect.E)
     (hAj : Aj j σ' σ'') (hnej : pj ;; M Aj j σ' ≠ Effect.E) :
     ∃ σ''' : Store,
-      IStep M D ⟨ths, σ⟩ ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩ ∧
-      IStep M D ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩
-              ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-                  (Ej.plug .skip, pj ;; M Aj j σ'), σ''⟩ ∧
-      IStep M D ⟨ths, σ⟩ ⟨ths.set j (Ej.plug .skip, pj ;; M Aj j σ), σ'''⟩ ∧
-      IStep M D ⟨ths.set j (Ej.plug .skip, pj ;; M Aj j σ), σ'''⟩
-              ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-                  (Ej.plug .skip, pj ;; M Aj j σ'), σ''⟩ := by
+      IStep M D ⟨ths, σ⟩ ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩ ∧
+      IStep M D ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩
+              ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', pj ;; M Aj j σ'), σ''⟩ ∧
+      IStep M D ⟨ths, σ⟩ ⟨ths.set j (rj', pj ;; M Aj j σ), σ'''⟩ ∧
+      IStep M D ⟨ths.set j (rj', pj ;; M Aj j σ), σ'''⟩
+              ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', pj ;; M Aj j σ'), σ''⟩ := by
   have hmiN : M Ai i σ ⊑ Effect.N := le_N_of_ne_E (seq_arg_ne_E hnei)
   obtain ⟨σ''', hAjσ, hAiσ'''⟩ := hV.left i j Ai Aj σ σ' σ'' hij hmiN hAi hmj hAj
-  exact ⟨σ''', diamond_core hV hij hi hj hmiN hAi hnei hAj hnej hAjσ hAiσ'''⟩
+  exact ⟨σ''', diamond_core hV hij hi hj ali alj hmiN hAi hnei hAj hnej hAjσ hAiσ'''⟩
 
 /-! ### Independent (store-preserving) step commutation
 
@@ -217,25 +239,23 @@ theorem.  Store swap from validity condition (4). -/
 
 theorem diamond_parallel {M : MoverSpec} {D : BodyEnv} (hV : Valid M)
     {ths : List (Stmt × Phase)} {σ σ' σ'' : Store} {i j : Tid}
-    {Ei Ej : Ctx} {Ai Aj : Action} {pi : Phase}
+    {ri ri' rj rj' : Stmt} {Ai Aj : Action} {pi : Phase}
     (hij : i ≠ j)
-    (hi : ths[i]? = some (Ei.plug (.act Ai), pi))
-    (hj : ths[j]? = some (Ej.plug (.act Aj), Effect.N))
+    (hi : ths[i]? = some (ri, pi)) (hj : ths[j]? = some (rj, Effect.N))
+    (ali : ActionLike M D i ri ri' Ai pi) (alj : ActionLike M D j rj rj' Aj Effect.N)
     (hmiN : M Ai i σ ⊑ Effect.N)
     (hAi : Ai i σ σ') (hnei : pi ;; M Ai i σ ≠ Effect.E)
     (hmjL : M Aj j σ ⊑ Effect.L)
     (hAj : Aj j σ σ'') :
     ∃ σ''' : Store,
       -- i then j
-      IStep M D ⟨ths, σ⟩ ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩ ∧
-      IStep M D ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩
-              ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-                  (Ej.plug .skip, Effect.N ;; M Aj j σ), σ'''⟩ ∧
+      IStep M D ⟨ths, σ⟩ ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩ ∧
+      IStep M D ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩
+              ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', Effect.N ;; M Aj j σ), σ'''⟩ ∧
       -- j then i, reconverging
-      IStep M D ⟨ths, σ⟩ ⟨ths.set j (Ej.plug .skip, Effect.N ;; M Aj j σ), σ''⟩ ∧
-      IStep M D ⟨ths.set j (Ej.plug .skip, Effect.N ;; M Aj j σ), σ''⟩
-              ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-                  (Ej.plug .skip, Effect.N ;; M Aj j σ), σ'''⟩ := by
+      IStep M D ⟨ths, σ⟩ ⟨ths.set j (rj', Effect.N ;; M Aj j σ), σ''⟩ ∧
+      IStep M D ⟨ths.set j (rj', Effect.N ;; M Aj j σ), σ''⟩
+              ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', Effect.N ;; M Aj j σ), σ'''⟩ := by
   have hmjN : M Aj j σ ⊑ Effect.N := le_trans hmjL (by decide)
   have hnej : Effect.N ;; M Aj j σ ≠ Effect.E := N_seq_ne_E_of_le_L hmjL
   -- store swap from validity (4)
@@ -247,58 +267,50 @@ theorem diamond_parallel {M : MoverSpec} {D : BodyEnv} (hV : Valid M)
     hV.effect j i Aj Ai σ σ'' (M Ai i σ) (Ne.symm hij) hmjN hAj rfl
   refine ⟨σ''', ?_, ?_, ?_, ?_⟩
   · -- i step
-    exact IStep.mk ths i _ _ σ σ' pi _ hi (IThreadStep.iaction_ok Ei Ai σ σ' pi hAi hnei)
+    exact IStep.mk ths i _ _ σ σ' pi _ hi (ali σ σ' hAi hnei)
   · -- i-then-j
-    have hgetj : (ths.set i (Ei.plug .skip, pi ;; M Ai i σ))[j]? =
-        some (Ej.plug (.act Aj), Effect.N) := by rw [getElem?_set_ne _ _ hij]; exact hj
+    have hgetj : (ths.set i (ri', pi ;; M Ai i σ))[j]? = some (rj, Effect.N) := by
+      rw [getElem?_set_ne _ _ hij]; exact hj
     have hnej' : Effect.N ;; M Aj j σ' ≠ Effect.E := by rw [heffj]; exact hnej
-    have step : IStep M D ⟨ths.set i (Ei.plug .skip, pi ;; M Ai i σ), σ'⟩
-        ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-            (Ej.plug .skip, Effect.N ;; M Aj j σ'), σ'''⟩ :=
-      IStep.mk _ j _ _ σ' σ''' Effect.N _ hgetj
-        (IThreadStep.iaction_ok Ej Aj σ' σ''' Effect.N hAjσ' hnej')
-    have : (⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-              (Ej.plug .skip, Effect.N ;; M Aj j σ'), σ'''⟩ : IState)
-        = ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-              (Ej.plug .skip, Effect.N ;; M Aj j σ), σ'''⟩ := by rw [heffj]
+    have step : IStep M D ⟨ths.set i (ri', pi ;; M Ai i σ), σ'⟩
+        ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', Effect.N ;; M Aj j σ'), σ'''⟩ :=
+      IStep.mk _ j _ _ σ' σ''' Effect.N _ hgetj (alj σ' σ''' hAjσ' hnej')
+    have : (⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', Effect.N ;; M Aj j σ'), σ'''⟩ : IState)
+        = ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', Effect.N ;; M Aj j σ), σ'''⟩ := by rw [heffj]
     exact this ▸ step
   · -- j step
-    exact IStep.mk ths j _ _ σ σ'' Effect.N _ hj (IThreadStep.iaction_ok Ej Aj σ σ'' Effect.N hAj hnej)
+    exact IStep.mk ths j _ _ σ σ'' Effect.N _ hj (alj σ σ'' hAj hnej)
   · -- j-then-i, reconverging
-    have hgeti : (ths.set j (Ej.plug .skip, Effect.N ;; M Aj j σ))[i]? =
-        some (Ei.plug (.act Ai), pi) := by
+    have hgeti : (ths.set j (rj', Effect.N ;; M Aj j σ))[i]? = some (ri, pi) := by
       rw [getElem?_set_ne _ _ (Ne.symm hij)]; exact hi
     have hnei'' : pi ;; M Ai i σ'' ≠ Effect.E := by rw [heffi]; exact hnei
-    have step : IStep M D ⟨ths.set j (Ej.plug .skip, Effect.N ;; M Aj j σ), σ''⟩
-        ⟨(ths.set j (Ej.plug .skip, Effect.N ;; M Aj j σ)).set i
-            (Ei.plug .skip, pi ;; M Ai i σ''), σ'''⟩ :=
-      IStep.mk _ i _ _ σ'' σ''' pi _ hgeti
-        (IThreadStep.iaction_ok Ei Ai σ'' σ''' pi hAiσ'' hnei'')
+    have step : IStep M D ⟨ths.set j (rj', Effect.N ;; M Aj j σ), σ''⟩
+        ⟨(ths.set j (rj', Effect.N ;; M Aj j σ)).set i (ri', pi ;; M Ai i σ''), σ'''⟩ :=
+      IStep.mk _ i _ _ σ'' σ''' pi _ hgeti (ali σ'' σ''' hAiσ'' hnei'')
     have hfin :
-        (ths.set j (Ej.plug .skip, Effect.N ;; M Aj j σ)).set i (Ei.plug .skip, pi ;; M Ai i σ'')
-        = (ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j (Ej.plug .skip, Effect.N ;; M Aj j σ) := by
+        (ths.set j (rj', Effect.N ;; M Aj j σ)).set i (ri', pi ;; M Ai i σ'')
+        = (ths.set i (ri', pi ;; M Ai i σ)).set j (rj', Effect.N ;; M Aj j σ) := by
       rw [heffi]; exact (set_comm ths _ _ hij).symm
-    have : (⟨(ths.set j (Ej.plug .skip, Effect.N ;; M Aj j σ)).set i
-              (Ei.plug .skip, pi ;; M Ai i σ''), σ'''⟩ : IState)
-        = ⟨(ths.set i (Ei.plug .skip, pi ;; M Ai i σ)).set j
-              (Ej.plug .skip, Effect.N ;; M Aj j σ), σ'''⟩ := by rw [hfin]
+    have : (⟨(ths.set j (rj', Effect.N ;; M Aj j σ)).set i (ri', pi ;; M Ai i σ''), σ'''⟩ : IState)
+        = ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', Effect.N ;; M Aj j σ), σ'''⟩ := by rw [hfin]
     exact this ▸ step
 
 /-! ### What remains for the full Reduction theorem
 
-The complete local-commutation toolkit of the Reduction proof is now mechanized
-for the action/action cases (the store-touching ones), all from `Valid M`:
+The complete local-commutation toolkit of the Reduction proof is now mechanized,
+for *all* store-touching cases (`I-action` and `I-if` alike, via `ActionLike`)
+and the store-preserving cases, all from `Valid M`:
 
   * `right_commute_state` — Right Commutativity (validity (1));
   * `left_commute_state`  — Left Commutativity  (validity (2));
   * `diamond_parallel`    — the Diamond lemma    (validity (4));
   * `indep_commute`       — the store-preserving cases (no validity needed).
 
-What remains for the full theorem is the surrounding structure, which is
-combinatorial rather than mover-theoretic:
+The `I-if` cases are obtained by passing `actionLike_ite_tru`/`actionLike_ite_fls`
+in place of `actionLike_action`.
 
-  * the `I-if` variants of the commutation cases (identical in spirit to the
-    `I-action` cases, since a conditional action is just a store update);
+What remains for the full theorem is purely combinatorial (no more mover theory):
+
   * **Iterative Diamond** (iterating `diamond_parallel` along a left-mover run);
   * **Post-Commit Termination**, which invokes the (still axiomatized)
     Preservation theorem;
