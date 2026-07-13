@@ -30,7 +30,7 @@ sixth (`Instrumented.lean`) mechanizing the paper's full soundness chain.
 | `MoverLogic/Specs.lean`     | §"Mover Specifications" | Mover specs `M`, the lifted `M(A,P)` as a genuine least-upper-bound, the four **Validity** conditions |
 | `MoverLogic/Logic.lean`     | Figs. "proof rules"  | Predicate operators; the judgment `R,G ⊢ s : P ⇒ Q ! e` with every rule; function + state judgments |
 | `MoverLogic/Canonical.lean` | Lemmas Consequence / Evaluation Context | Canonical (non-`M-conseq`) form, `M-seq` inversion, and the Evaluation Context lemma — the structural core of Preservation |
-| `MoverLogic/Reduction.lean` | Lemma Right Commutativity | The state-level action/action Right-Commutativity diamond — the mover-theoretic engine of Reduction — derived from `Valid M` |
+| `MoverLogic/Reduction.lean` | Lemmas Right / Left Commutativity, Diamond | All state-level action/action commutation lemmas of Reduction — Right, Left, the parallel Diamond, and the store-preserving cases — derived from `Valid M` |
 | `MoverLogic/Soundness.lean` | Thm "Soundness"      | Not-Wrong for standard states; Soundness-modulo-Preservation |
 | `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **full soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, Reduction, Preservation, and the assembled `soundness` |
 
@@ -143,15 +143,15 @@ are not mechanical transcription:
 
 2. *Reduction* is a global **trace-block commutation** argument
    (`Pre`/`Post`/`Finish` decomposition, Diamond / Iterative Diamond /
-   Post-Commit Termination). Its mover-theoretic engine is now mechanized:
-   `Reduction.lean`'s **`right_commute_state`** proves the paper's Right
-   Commutativity lemma at the instrumented-state level for the central
-   action/action case — the full store swap, phase updates and thread-list
-   bookkeeping — discharged entirely from `Valid M` (conditions (1) and (3)).
-   What remains is the surrounding trace-level combinatorics (the other
-   commutativity cases, Diamond / Iterative Diamond, Post-Commit Termination —
-   which itself invokes Preservation — and the block-decomposition induction on
-   `→*`); that is a large separate development.
+   Post-Commit Termination). Its entire **mover-theoretic layer** is now
+   mechanized in `Reduction.lean`, for the store-touching action/action cases,
+   all discharged from `Valid M`: `right_commute_state` (Right Commutativity,
+   validity (1)), `left_commute_state` (Left Commutativity, validity (2)),
+   `diamond_parallel` (the Diamond lemma, validity (4)), and `indep_commute`
+   (the store-preserving cases, no validity needed). What remains is the
+   surrounding *combinatorial* structure: the `I-if` variants, Iterative
+   Diamond, Post-Commit Termination (which invokes Preservation), and the
+   block-decomposition induction on `→*` — a large separate development.
 
 So the honest status is: the **entire chain is assembled, every logic-level
 structural lemma is mechanized, and the mover-theoretic engines of both hard
