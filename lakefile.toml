@@ -1,0 +1,9 @@
+name = "MoverLogic"
+defaultTargets = ["MoverLogic"]
+
+# Self-contained formalization of "Mover Logic: A Concurrent Program Logic
+# for Reduction and Rely-Guarantee Reasoning" (ECOOP 2024).
+# Deliberately Mathlib-free so it builds in seconds and depends only on core Lean.
+
+[[lean_lib]]
+name = "MoverLogic"
