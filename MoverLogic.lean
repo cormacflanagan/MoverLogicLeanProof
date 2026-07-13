@@ -17,3 +17,4 @@ import MoverLogic.Logic
 import MoverLogic.Canonical
 import MoverLogic.Soundness
 import MoverLogic.Instrumented
+import MoverLogic.Reduction
