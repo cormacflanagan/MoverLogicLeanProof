@@ -29,6 +29,7 @@ sixth (`Instrumented.lean`) mechanizing the paper's full soundness chain.
 | `MoverLogic/Language.lean`  | §"Mover Logic Language" | Stores, actions, statements, evaluation contexts, per-thread + whole-state operational semantics, "goes wrong" |
 | `MoverLogic/Specs.lean`     | §"Mover Specifications" | Mover specs `M`, the lifted `M(A,P)` as a genuine least-upper-bound, the four **Validity** conditions |
 | `MoverLogic/Logic.lean`     | Figs. "proof rules"  | Predicate operators; the judgment `R,G ⊢ s : P ⇒ Q ! e` with every rule; function + state judgments |
+| `MoverLogic/Canonical.lean` | Lemmas Consequence / Evaluation Context | Canonical (non-`M-conseq`) form, `M-seq` inversion, and the Evaluation Context lemma — the structural core of Preservation |
 | `MoverLogic/Soundness.lean` | Thm "Soundness"      | Not-Wrong for standard states; Soundness-modulo-Preservation |
 | `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **full soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, Reduction, Preservation, and the assembled `soundness` |
 
@@ -108,3 +109,44 @@ paper-length proofs are the remaining mechanization work.
 `Soundness.lean` additionally provides `soundness_of_preservation`, a variant
 that takes Preservation as an explicit **hypothesis** (no axioms at all), for a
 fully axiom-free conditional statement.
+
+## Progress toward eliminating the two axioms
+
+`Canonical.lean` mechanizes the **structural core of the Preservation proof**
+(all verified, no `sorry`, standard axioms only):
+
+- `Judg.consequence` — the paper's **Consequence** lemma: every derivation is a
+  canonical (non-`M-conseq`) derivation `JudgNC` up to weakening of `R,G,P,Q,e`;
+- `Judg.inv_seq` — inversion for `M-seq` via the canonical form;
+- `Judg.eval_ctxt` — the **Evaluation Context** lemma: decompose a derivation of
+  `E[s]` into a canonical derivation of the redex `s` plus a context effect
+  `e_E`, with a rebuild principle for any replacement redex `s'`.
+
+These are exactly the inversion lemmas on which Preservation-for-Redexes,
+Yield-Stabilization and the Preservation theorem are built.
+
+**Why the two axioms are not yet removed.** Two genuine obstacles remain — these
+are not mechanical transcription:
+
+1. *Preservation* additionally needs the **Prefix** lemma
+   (`⊢∅,∅ s : P⇒Q ! e  ⟹  ⊢R,G s : (P';P)⇒(P';Q) ! e`). Prefixing a precondition
+   can only *shrink* a lifted mover effect `M(A,·)`, so an action's effect can
+   drop below the left-mover threshold `⊑ L`, at which point rule `M-action`'s
+   totality side-condition ("if the effect is a left-mover then the action is
+   total") must be re-discharged. The paper originally carried a validity
+   condition making left-movers total, then commented it out (see the
+   struck-through condition (4) in the Validity definition) and folded totality
+   into `M-action`. Discharging this rigorously needs either that condition
+   reinstated or a more careful argument — a real proof obligation, not a
+   transcription gap.
+
+2. *Reduction* is a global **trace-block commutation** argument
+   (`Pre`/`Post`/`Finish` decomposition, Diamond / Iterative Diamond /
+   Post-Commit Termination). Its store-level crux (`right_commute`/`left_commute`
+   from `Valid M`) is already proved; lifting it to the state-level trace
+   induction is a large separate development.
+
+So the honest status is: the **entire chain is assembled and every logic-level
+structural lemma is mechanized**; the two axioms isolate exactly the two
+hard cores above, and `#print axioms soundness` still lists precisely
+`reduction` and `preservation`.

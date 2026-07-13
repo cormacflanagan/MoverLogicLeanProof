@@ -14,5 +14,6 @@ import MoverLogic.Effects
 import MoverLogic.Language
 import MoverLogic.Specs
 import MoverLogic.Logic
+import MoverLogic.Canonical
 import MoverLogic.Soundness
 import MoverLogic.Instrumented
