@@ -31,6 +31,9 @@ sixth (`Instrumented.lean`) mechanizing the paper's full soundness chain.
 | `MoverLogic/Logic.lean`     | Figs. "proof rules"  | Predicate operators; the judgment `R,G ⊢ s : P ⇒ Q ! e` with every rule; function + state judgments |
 | `MoverLogic/Canonical.lean` | Lemmas Consequence / Evaluation Context | Canonical (non-`M-conseq`) form, `M-seq` inversion, and the Evaluation Context lemma — the structural core of Preservation |
 | `MoverLogic/Reduction.lean` | Lemmas Right / Left Commutativity, Diamond | All state-level action/action commutation lemmas of Reduction — Right, Left, the parallel Diamond, and the store-preserving cases — derived from `Valid M` |
+| `MoverLogic/ReductionThm.lean` | §sec:red-thm (Reduction proof) | The **trace-composable** local-commutation layer: thread-indexed steps `→_i`, the state classes `ℝ_i`/`𝕃_i`/`ℕ_i`/`𝔼_i`, the step classifier, *absorbing wrong*, and `right_commutes` / `left_commutes` / `diamond_commutes` / `indep_*` covering **every** step kind (structural + store-touching, `I-action` + `I-if`) with all class side-conditions discharged |
+| `MoverLogic/PostCommit.lean` | Lemma lem:post-commit-term | The statement size metric `bodySize`, the model well-formedness the paper assumes (`NeverYields`, `CondTotal`, `GoodSizing` = atomic functions non-recursive), the `progress` engine, and **`post_commit_term`** — a post-commit thread of a verified state runs to a settled state under `↦` |
+| `MoverLogic/Assembly.lean` | §sec:red-thm (global argument) | Infrastructure for the trace-block assembly: tagged runs `IStepsT`, **class invariance** under other-thread steps, the phase-generalized `right_commutes'`, and `NonJRun` (the "main trace" shape). The remaining combinatorial bubble/induction is documented here |
 | `MoverLogic/Soundness.lean` | Thm "Soundness"      | Not-Wrong for standard states; Soundness-modulo-Preservation |
 | `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **full soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, Reduction, Preservation, and the assembled `soundness` |
 
@@ -144,15 +147,47 @@ are not mechanical transcription:
 2. *Reduction* is a global **trace-block commutation** argument
    (`Pre`/`Post`/`Finish` decomposition, Diamond / Iterative Diamond /
    Post-Commit Termination). Its entire **mover-theoretic layer** is now
-   mechanized in `Reduction.lean`, for every step kind, all discharged from
-   `Valid M`: `right_commute_state` (Right Commutativity, validity (1)),
-   `left_commute_state` (Left Commutativity, validity (2)), `diamond_parallel`
-   (the Diamond lemma, validity (4)), and `indep_commute` (the store-preserving
-   cases, no validity needed). The store-touching lemmas are stated over
-   *action-like* steps (`ActionLike`), so a single proof covers both `I-action`
-   and `I-if`. What remains is purely *combinatorial* (no more mover theory):
-   Iterative Diamond, Post-Commit Termination (which invokes Preservation), and
-   the block-decomposition induction on `→*` — a large separate development.
+   mechanized — first at the state level in `Reduction.lean`, and then, in
+   `ReductionThm.lean`, lifted to the **thread-indexed, trace-composable form**
+   the global argument actually consumes: `right_commutes` (validity (1)),
+   `left_commutes` (validity (2)), `diamond_commutes` (validity (4)) and the
+   structural cases `indep_i_first`/`indep_i_second`. Unlike the state-level
+   versions these are indexed by the acting thread, cover *every* step kind
+   (structural and store-touching, `I-action` and `I-if`), and discharge the
+   `ℝ_i`/`𝕃_i`/`ℕ_i`/`𝔼_i` class side-conditions, so the swaps chain directly.
+   `ReductionThm.lean` also proves that **reaching wrong is absorbing**
+   (`iwrong_step`), which lets the block argument keep the fatal step *inside*
+   its own thread's transaction — so only the OK/structural commutations above
+   are ever needed (no wrong step is commuted across threads).
+
+   **Post-Commit Termination is now proved** (`PostCommit.lean`,
+   `post_commit_term`): a post-commit thread of a verified state runs to a
+   settled state under `↦`, by the paper's size-metric argument. It needs a
+   well-founded size metric, which is well-founded *only if atomic functions are
+   non-recursive* — the paper's side-condition, which the Lean model's `FnValid`
+   had dropped. Rather than mutate the core `Judg`, this is reinstated as an
+   explicit `GoodSizing D fs` witness (a size assignment strictly dominating each
+   atomic body; it exists iff the atomic call graph is well-founded), passed to
+   the lemma alongside `NeverYields` and `CondTotal`. `post_commit_term` depends
+   only on `preservation` plus the standard axioms.
+
+   **Iterative Diamond is now proved** (`Assembly.lean`, `iter_diamond`, built on
+   the single-step `push_j`): a whole left-mover run of a thread pushes through a
+   non-`a` run, so a post-commit termination run can be merged into the main
+   trace. Depends only on `propext`.
+
+   With this, **every named lemma of the paper's Reduction proof is mechanized**
+   (Right/Left Commutativity, Diamond, Iterative Diamond, Post-Commit
+   Termination), plus the phase-generalized commutation, class invariance, and
+   tagged-run infrastructure the top-level argument needs.
+
+   What remains is the **top-level trace-block induction** (`(form:b)`/`(form:c)`):
+   the transaction bubble that extracts a thread's steps to the front of a run
+   (via the two adjacent swaps `right_commutes'` / `left_commutes`),
+   first-committer identification, the fatal-step diamond for the single
+   wrong-reaching step, and the outer induction that assembles these with
+   Post-Commit Termination and Iterative Diamond — a large but now
+   fully-equipped combinatorial development.
 
 So the honest status is: the **entire chain is assembled, every logic-level
 structural lemma is mechanized, and the mover-theoretic engines of both hard

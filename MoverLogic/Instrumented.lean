@@ -17,15 +17,17 @@
                                      verified instrumented state (all yielding);
     * `preservation_star`          — Preservation lifted along `↦*`;
     * `right_commute` / `left_commute` — the store-level commutativity at the
-                                     heart of Reduction, derived from `Valid M`;
-    * `soundness`                  — the paper's Theorem (Soundness), assembled.
+                                     heart of Reduction, derived from `Valid M`.
 
-  Axiomatized (faithful statements of the paper's two hardest theorems, whose
-  multi-lemma proofs — trace-block algebra for Reduction; the inversion stack
-  for Preservation — are not mechanized here):
-    * `reduction`     (Theorem thm:red)
-    * `preservation`  (Theorem thm:pres)
-  `#print axioms soundness` shows exactly these two (plus Lean's standard axioms).
+  Reduction (Theorem thm:red) is **proved** downstream as
+  `MoverLogic.reduction_proved` (its trace-block algebra is mechanized across
+  `ReductionThm`/`PostCommit`/`Assembly`), and Soundness is assembled there as
+  `MoverLogic.soundness'`.  The only remaining axiom is:
+    * `preservation`  (Theorem thm:pres) — the inversion stack (Evaluation
+                        Context, Consequence, Preservation for Redexes, Yield
+                        Stabilization, Prefix, Context Switch) is not mechanized.
+  `#print axioms soundness'` shows exactly `preservation` (plus Lean's standard
+  axioms).
 -/
 import MoverLogic.Logic
 
@@ -47,6 +49,12 @@ structure IState where
 
 /-- The underlying statements of an instrumented state. -/
 def IState.stmts (Pi : IState) : List Stmt := Pi.threads.map Prod.fst
+
+/-- Every thread's phase is `R` or `N` (the invariant maintained by the
+    semantics; established here for the all-`R` embedded state). -/
+def PhaseRN (Q : IState) : Prop :=
+  ∀ (u : Tid) (su : Stmt) (pu : Phase), Q.threads[u]? = some (su, pu) →
+    pu = Effect.R ∨ pu = Effect.N
 
 /-- A statement is *yielding* if it is `E[yield]` or has terminated (`skip`). -/
 def yielding (s : Stmt) : Prop := (∃ E : Ctx, s = E.plug .yield) ∨ s = .skip
@@ -281,10 +289,21 @@ theorem R_seq_ne_E {e : Effect} (h : e ≠ Effect.E) : Effect.R ;; e ≠ Effect.
 /-- **Embedding.** A verified standard state gives a verified instrumented state
     with all phases `R`, matching statements/store, and all threads yielding.
     (This is the `⊢ Σ ⟹ ⊢ Π ∧ Σ ~ Π` step opening the Soundness proof.) -/
+theorem phaseRN_map_R {ss : List Stmt} {σ : Store} :
+    PhaseRN ⟨ss.map (fun s => (s, Effect.R)), σ⟩ := by
+  intro u su pu hget
+  have hmap : (ss[u]?).map (fun s => (s, Effect.R)) = some (su, pu) := by
+    rw [← List.getElem?_map]; exact hget
+  rcases hh : ss[u]? with _ | s0
+  · rw [hh] at hmap; simp at hmap
+  · rw [hh] at hmap
+    simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at hmap
+    exact Or.inl hmap.2.symm
+
 theorem embed {M : MoverSpec} {D : Decls} {st : State} (h : StateValid M D st) :
-    ∃ Pi, IStateValid M D Pi ∧ Sim st Pi ∧ (∀ sp ∈ Pi.threads, yielding sp.1) := by
+    ∃ Pi, IStateValid M D Pi ∧ Sim st Pi ∧ (∀ sp ∈ Pi.threads, yielding sp.1) ∧ PhaseRN Pi := by
   obtain ⟨R, G, hfns, hvalid, hrefl, hthreads, hcompat⟩ := h
-  refine ⟨⟨st.threads.map (fun s => (s, Effect.R)), st.store⟩, ?_, ?_, ?_⟩
+  refine ⟨⟨st.threads.map (fun s => (s, Effect.R)), st.store⟩, ?_, ?_, ?_, phaseRN_map_R⟩
   · refine ⟨R, G, 0, st.store, hfns, hvalid, hrefl, ?_, hcompat⟩
     intro t s p hidx
     -- decode the mapped thread list: recover `st.threads[t]? = some s` and `p = R`
@@ -321,13 +340,10 @@ Stabilization, Prefix, Context Switch) for Preservation — are not mechanized
 here.  We state them faithfully and take them as axioms; `#print axioms
 soundness` exposes exactly this dependency. -/
 
-/-- **Reduction (Theorem thm:red).**  A verified instrumented state all of whose
-    threads are yielding, that goes wrong under the preemptive semantics, also
-    goes wrong under the non-preemptive semantics. -/
-axiom reduction {M : MoverSpec} {D : Decls} {Pi : IState} :
-    IStateValid M D Pi → (∀ sp ∈ Pi.threads, yielding sp.1) →
-    (∃ Pi', ISteps M D.bodies Pi Pi' ∧ IWrong Pi') →
-    (∃ Pi'', INonSteps M D.bodies Pi Pi'' ∧ IWrong Pi'')
+-- **Reduction (Theorem thm:red)** is *no longer an axiom*: it is mechanized as
+-- `MoverLogic.reduction_proved` in `Assembly.lean` (from the trace-block algebra
+-- built across `ReductionThm`/`PostCommit`/`Assembly`), and `soundness'` there
+-- re-assembles Soundness with no `reduction` axiom.  Only `preservation` remains.
 
 /-- **Preservation (Theorem thm:pres).**  Verification is preserved by a single
     non-preemptive instrumented step. -/
@@ -363,19 +379,13 @@ theorem left_commute {M : MoverSpec} (hV : Valid M) {t u : Tid} {A1 A2 : Action}
     ∃ σ''', A2 u σ σ''' ∧ A1 t σ''' σ'' :=
   hV.left t u A1 A2 σ σ' σ'' htu h1 hA1 h2 hA2
 
-/-! ### Soundness (Theorem thm:sound), fully assembled -/
+/-! ### Soundness (Theorem thm:sound)
 
-/-- **Soundness.**  If `⊢ Σ` then `Σ` does not go wrong under the standard
-    (preemptive) semantics.  Assembled exactly as in the paper: embed `Σ` into a
-    verified, all-yielding instrumented `Π`; run Simulation to a wrong preemptive
-    `Π'`; apply Reduction to reach a wrong non-preemptive `Π''`; apply
-    Preservation to get `⊢ Π''`; contradict with Not-Wrong. -/
-theorem soundness {M : MoverSpec} {D : Decls} {st : State}
-    (h : StateValid M D st) : ¬ GoesWrong D.bodies st := by
-  rintro ⟨st', hsteps, hwrong⟩
-  obtain ⟨Pi, hPival, hsim, hyield⟩ := embed h
-  obtain ⟨Pi', histeps, hiwrong⟩ := simulation_star hsteps hwrong Pi hsim
-  obtain ⟨Pi'', hnon, hiwrong''⟩ := reduction hPival hyield ⟨Pi', histeps, hiwrong⟩
-  exact (preservation_star hnon hPival).not_wrong hiwrong''
+Soundness is assembled in `Assembly.lean` as `MoverLogic.soundness'`, on top of
+the *proved* Reduction (`reduction_proved`) — embed `Σ` into a verified,
+all-yielding instrumented `Π`; run Simulation to a wrong preemptive `Π'`; apply
+Reduction to reach a wrong non-preemptive `Π''`; apply Preservation; contradict
+with Not-Wrong.  It lives there (not here) because Reduction is proved downstream
+of this module, so `#print axioms soundness'` shows no `reduction`. -/
 
 end MoverLogic
