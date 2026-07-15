@@ -20,8 +20,9 @@ core Lean, so it builds in seconds and is easy to audit.
 
 ## The modules
 
-Built in five pieces (Effects → Language → Specs → Logic → Soundness), plus a
-sixth (`Instrumented.lean`) mechanizing the paper's full soundness chain.
+Built in five pieces (Effects → Language → Specs → Logic → Soundness), plus the
+soundness chain (`Instrumented.lean`) and the fully-mechanized **Reduction
+theorem** (`Reduction` → `ReductionThm` → `PostCommit` → `Assembly`).
 
 | File | Paper section | Contents |
 |------|---------------|----------|
@@ -32,20 +33,20 @@ sixth (`Instrumented.lean`) mechanizing the paper's full soundness chain.
 | `MoverLogic/Canonical.lean` | Lemmas Consequence / Evaluation Context | Canonical (non-`M-conseq`) form, `M-seq` inversion, and the Evaluation Context lemma — the structural core of Preservation |
 | `MoverLogic/Reduction.lean` | Lemmas Right / Left Commutativity, Diamond | All state-level action/action commutation lemmas of Reduction — Right, Left, the parallel Diamond, and the store-preserving cases — derived from `Valid M` |
 | `MoverLogic/ReductionThm.lean` | §sec:red-thm (Reduction proof) | The **trace-composable** local-commutation layer: thread-indexed steps `→_i`, the state classes `ℝ_i`/`𝕃_i`/`ℕ_i`/`𝔼_i`, the step classifier, *absorbing wrong*, and `right_commutes` / `left_commutes` / `diamond_commutes` / `indep_*` covering **every** step kind (structural + store-touching, `I-action` + `I-if`) with all class side-conditions discharged |
-| `MoverLogic/PostCommit.lean` | Lemma lem:post-commit-term | The statement size metric `bodySize`, the model well-formedness the paper assumes (`NeverYields`, `CondTotal`, `GoodSizing` = atomic functions non-recursive), the `progress` engine, and **`post_commit_term`** — a post-commit thread of a verified state runs to a settled state under `↦` |
-| `MoverLogic/Assembly.lean` | §sec:red-thm (global argument) | Infrastructure for the trace-block assembly: tagged runs `IStepsT`, **class invariance** under other-thread steps, the phase-generalized `right_commutes'`, and `NonJRun` (the "main trace" shape). The remaining combinatorial bubble/induction is documented here |
+| `MoverLogic/PostCommit.lean` | Lemma lem:post-commit-term | The statement size metric `bodySize`, the model well-formedness the paper assumes (`NeverYields`, `CondTotal`, `GoodSizing` = atomic functions non-recursive), the `progress` engine, and **`post_commit_term`** / **`post_commit_lm`** — a post-commit thread of a verified state runs to a settled state under `↦` |
+| `MoverLogic/Assembly.lean` | §sec:red-thm (global argument) | The **complete Reduction proof**: length-indexed merge (`merge_wrongN`), mover-invariance (`mover_invariant`, `active_*_le_L`), the dischargeable wrong-commutation (`left_commutes_w'` + `interfered_branches_ne_E`), transaction extraction (`extract_committer`, `left_decompose`), the outer induction `reorder_core`, and finally **`reduction_proved`** and **`soundness'`** |
 | `MoverLogic/Soundness.lean` | Thm "Soundness"      | Not-Wrong for standard states; Soundness-modulo-Preservation |
-| `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **full soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, Reduction, Preservation, and the assembled `soundness` |
+| `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, `embed`, and the `preservation` axiom (Reduction and the assembled Soundness are proved in `Assembly.lean`) |
 
 ## What is proved
 
 The whole development contains **no `sorry` and no `native_decide`**. Every
 result named in this section is machine-checked using **only Lean's standard
 axioms** (`propext` / `Classical.choice` / `Quot.sound`; verify with
-`#print axioms`). The single place where custom axioms enter is the two
-faithful metatheorems of the full soundness chain — `reduction` and
-`preservation` — documented in the last section; `#print axioms soundness`
-lists exactly those two and nothing else.
+`#print axioms`). **The Reduction theorem is now fully mechanized** (it was
+previously taken as an axiom), so the *only* custom axiom left in the soundness
+chain is `preservation`; `#print axioms soundness'` lists exactly `preservation`
+plus the standard axioms and nothing else.
 
 **Piece 1 — the mathematical core (fully proved).**
 - `Effect.seq_assoc`, `seq_B_left/right` — `(Effect, ;;, B)` is a monoid.
@@ -73,125 +74,118 @@ upper bound over `P`'s pre-stores.
 - **`thread_effect_reducible`** — bridges to Piece 1: each verified thread's
   effect is non-error, hence any realizing effect sequence is DFA-accepted.
 
-## The full soundness chain (`Instrumented.lean`)
+## The full soundness chain
 
-`MoverLogic/Instrumented.lean` mechanizes the paper's entire proof structure
-(§"Overview of Correctness Proof") and assembles the top-level theorem
+The paper's entire proof structure (§"Overview of Correctness Proof") is
+mechanized across `Instrumented.lean` (the semantics + Simulation + embedding)
+and `Assembly.lean` (the Reduction theorem + the final assembly). The top-level
+theorem is
 
 ```lean
-theorem soundness (h : StateValid M D st) : ¬ GoesWrong D.bodies st
+theorem soundness' (hwf : WF M D) (h : StateValid M D st) : ¬ GoesWrong D.bodies st
 ```
 
-exactly as in the paper: embed `Σ` into a verified, all-yielding instrumented
-`Π`; run Simulation to a wrong preemptive `Π'`; apply Reduction to reach a wrong
-non-preemptive `Π''`; apply Preservation to get `⊢ Π''`; contradict Not-Wrong.
+assembled exactly as in the paper: embed `Σ` into a verified, all-yielding
+instrumented `Π`; run Simulation to a wrong preemptive `Π'`; apply **Reduction**
+(`reduction_proved`) to reach a wrong non-preemptive `Π''`; apply Preservation to
+get `⊢ Π''`; contradict Not-Wrong. The `WF M D` hypothesis bundles the model
+well-formedness the paper assumes (`NeverYields`, `CondTotal`, `NeverError`, and
+non-recursive atomic functions via `GoodSizing`).
 
-**Proved with no `sorry`, only standard axioms:**
+**Proved with no `sorry`, only standard axioms (+ `preservation`):**
 - the instrumented semantics (rules I-*), preemptive `→` and non-preemptive `↦`;
 - `IStateValid.not_wrong` — Not-Wrong for instrumented states (Thm not-wrong);
 - `simulation` and `simulation_star` — the Simulation theorem and its closure;
 - `embed` — a verified standard state embeds into a verified instrumented one;
 - `preservation_star` — Preservation lifted along `↦*`;
-- `right_commute` / `left_commute` — the store-level mover commutativity (paper
-  Lemmas Right/Left Commutativity) derived directly from `Valid M`; this is the
-  mathematical core on which the state-level Reduction argument rests;
-- `soundness` — the final assembly.
+- **`reduction_proved`** — Theorem thm:red, the Reduction theorem itself (see the
+  next section);
+- `soundness'` — the final assembly.
 
-**Taken as two named axioms** (`#print axioms soundness` shows exactly these,
-plus Lean's standard `propext`/`Classical.choice`/`Quot.sound`):
-- `reduction`    — Theorem thm:red (proof: the `Pre`/`Post`/`Finish` trace-block
-  algebra with Diamond / Iterative Diamond / Post-Commit Termination);
+**The one remaining axiom** (`#print axioms soundness'` shows exactly this, plus
+Lean's standard `propext`/`Classical.choice`/`Quot.sound`):
 - `preservation` — Theorem thm:pres (proof: the Evaluation-Context / Consequence
   / Preservation-for-Redexes / Yield-Stabilization / Prefix / Context-Switch
-  inversion stack).
-
-Both are stated faithfully over the instrumented non-preemptive semantics (where
-they are *true* — unlike step-wise preservation over the raw preemptive
-semantics, which is false and is exactly what reduction repairs). Their
-paper-length proofs are the remaining mechanization work.
+  inversion stack), stated faithfully over the instrumented non-preemptive
+  semantics (where it is *true* — unlike step-wise preservation over the raw
+  preemptive semantics, which is false and is exactly what Reduction repairs).
 
 `Soundness.lean` additionally provides `soundness_of_preservation`, a variant
 that takes Preservation as an explicit **hypothesis** (no axioms at all), for a
 fully axiom-free conditional statement.
 
-## Progress toward eliminating the two axioms
+## The Reduction theorem, mechanized
 
-`Canonical.lean` mechanizes the **structural core of the Preservation proof**
-(all verified, no `sorry`, standard axioms only):
+Reduction (Theorem thm:red) — *a verified all-yielding state that goes wrong
+preemptively also goes wrong non-preemptively* — is now **fully proved** as
+`reduction_proved`, discharging what was previously an axiom. The proof follows
+the paper (§sec:red-thm) and is built bottom-up:
 
-- `Judg.consequence` — the paper's **Consequence** lemma: every derivation is a
-  canonical (non-`M-conseq`) derivation `JudgNC` up to weakening of `R,G,P,Q,e`;
+- **Mover-theoretic layer** (`Reduction.lean`, `ReductionThm.lean`). The
+  state-level action/action commutations, lifted to the thread-indexed,
+  trace-composable form the global argument consumes: `right_commutes`
+  (validity 1), `left_commutes` (validity 2), `diamond_commutes` (validity 4),
+  the structural cases, and their wrong-case variants — covering *every* step
+  kind (structural and store-touching, `I-action` and `I-if`) with the
+  `ℝ_i`/`𝕃_i`/`ℕ_i`/`𝔼_i` class side-conditions discharged. Plus *reaching wrong
+  is absorbing*.
+
+- **Post-Commit Termination** (`PostCommit.lean`, `post_commit_term` /
+  `post_commit_lm`). A post-commit thread of a verified state runs to a settled
+  state under `↦`, by the paper's size-metric argument. Well-foundedness needs
+  atomic functions non-recursive — the paper's side-condition, reinstated as an
+  explicit `GoodSizing D fs` witness (rather than mutating the core `Judg`),
+  alongside `NeverYields` and `CondTotal` (bundled as `WF M D`).
+
+- **Iterative Diamond & length-indexed merge** (`Assembly.lean`, `iter_diamond`
+  / `iter_diamondN` / `merge_wrongN`). A whole left-mover run pushes through a
+  non-`a` run; the length-indexed variant makes the merged residual's length
+  bounded, so the outer induction is well-founded.
+
+- **Mover invariance & the committer-is-fatal case** (`Assembly.lean`). By
+  validity (3), a non-`a` step cannot change `a`'s action effects
+  (`mover_invariant`); a committed thread's redex is a left-mover
+  (`active_action_le_L` / `active_branches_le_L`, via `Judg.eval_ctxt`); and a
+  verified state's active thread cannot step to wrong (`valid_no_wrong_step`,
+  from `preservation`). Together these discharge the wrong-case left-commutation
+  side condition (`left_commutes_w'` + `interfered_branches_ne_E`) and rule out a
+  committer being the fatal thread (`committed_run_cannot_wrong`) — following the
+  paper's *commute-don't-refute* handling of the fatal step.
+
+- **Transaction extraction & the outer induction** (`Assembly.lean`,
+  `extract_committer` / `left_decompose` / `reorder_core`). The outer induction
+  uses the measure `2·n + w` (run length `n`, with `w ∈ {0,1}` distinguishing an
+  all-yielding start from a single post-commit-active thread) — capturing the
+  paper's unfinished-block count without an explicit `Post*/Pre*` block datatype.
+  `w = 0` pulls the first committer's transaction to the front non-preemptively;
+  `w = 1` pulls a post-commit thread's left-mover transaction, then either
+  settles it (recurse from an all-yielding state) or finishes and merges it
+  (`post_commit_lm` + `merge_wrongN`).
+
+`reduction_proved` feeds a preemptive-wrong run into `reorder_core` (`ISteps.toN`
+supplies the length), and `soundness'` re-assembles Soundness on top. Every one
+of these lemmas is machine-checked with only the standard axioms, or
+`preservation` for the post-commit steps.
+
+### What is left: the Preservation axiom
+
+The single remaining axiom is `preservation`. Its **structural core is
+mechanized** in `Canonical.lean` (all verified, no `sorry`, standard axioms):
+
+- `Judg.consequence` — the **Consequence** lemma (every derivation is a canonical
+  `JudgNC` up to weakening);
 - `Judg.inv_seq` — inversion for `M-seq` via the canonical form;
-- `Judg.eval_ctxt` — the **Evaluation Context** lemma: decompose a derivation of
-  `E[s]` into a canonical derivation of the redex `s` plus a context effect
-  `e_E`, with a rebuild principle for any replacement redex `s'`.
+- `Judg.eval_ctxt` — the **Evaluation Context** lemma (decompose a derivation of
+  `E[s]` into the redex `s` plus a context effect, with a rebuild principle).
 
-These are exactly the inversion lemmas on which Preservation-for-Redexes,
-Yield-Stabilization and the Preservation theorem are built.
+What remains for Preservation is the **Prefix** lemma
+(`⊢∅,∅ s : P⇒Q ! e ⟹ ⊢R,G s : (P';P)⇒(P';Q) ! e`): prefixing a precondition can
+only *shrink* a lifted mover effect, so an action's effect can drop below the
+left-mover threshold, at which point rule `M-action`'s totality side-condition
+must be re-discharged — a real proof obligation (the paper originally carried a
+validity condition making left-movers total, then folded totality into
+`M-action`). Discharging it rigorously is the remaining mechanization work.
 
-**Why the two axioms are not yet removed.** Two genuine obstacles remain — these
-are not mechanical transcription:
-
-1. *Preservation* additionally needs the **Prefix** lemma
-   (`⊢∅,∅ s : P⇒Q ! e  ⟹  ⊢R,G s : (P';P)⇒(P';Q) ! e`). Prefixing a precondition
-   can only *shrink* a lifted mover effect `M(A,·)`, so an action's effect can
-   drop below the left-mover threshold `⊑ L`, at which point rule `M-action`'s
-   totality side-condition ("if the effect is a left-mover then the action is
-   total") must be re-discharged. The paper originally carried a validity
-   condition making left-movers total, then commented it out (see the
-   struck-through condition (4) in the Validity definition) and folded totality
-   into `M-action`. Discharging this rigorously needs either that condition
-   reinstated or a more careful argument — a real proof obligation, not a
-   transcription gap.
-
-2. *Reduction* is a global **trace-block commutation** argument
-   (`Pre`/`Post`/`Finish` decomposition, Diamond / Iterative Diamond /
-   Post-Commit Termination). Its entire **mover-theoretic layer** is now
-   mechanized — first at the state level in `Reduction.lean`, and then, in
-   `ReductionThm.lean`, lifted to the **thread-indexed, trace-composable form**
-   the global argument actually consumes: `right_commutes` (validity (1)),
-   `left_commutes` (validity (2)), `diamond_commutes` (validity (4)) and the
-   structural cases `indep_i_first`/`indep_i_second`. Unlike the state-level
-   versions these are indexed by the acting thread, cover *every* step kind
-   (structural and store-touching, `I-action` and `I-if`), and discharge the
-   `ℝ_i`/`𝕃_i`/`ℕ_i`/`𝔼_i` class side-conditions, so the swaps chain directly.
-   `ReductionThm.lean` also proves that **reaching wrong is absorbing**
-   (`iwrong_step`), which lets the block argument keep the fatal step *inside*
-   its own thread's transaction — so only the OK/structural commutations above
-   are ever needed (no wrong step is commuted across threads).
-
-   **Post-Commit Termination is now proved** (`PostCommit.lean`,
-   `post_commit_term`): a post-commit thread of a verified state runs to a
-   settled state under `↦`, by the paper's size-metric argument. It needs a
-   well-founded size metric, which is well-founded *only if atomic functions are
-   non-recursive* — the paper's side-condition, which the Lean model's `FnValid`
-   had dropped. Rather than mutate the core `Judg`, this is reinstated as an
-   explicit `GoodSizing D fs` witness (a size assignment strictly dominating each
-   atomic body; it exists iff the atomic call graph is well-founded), passed to
-   the lemma alongside `NeverYields` and `CondTotal`. `post_commit_term` depends
-   only on `preservation` plus the standard axioms.
-
-   **Iterative Diamond is now proved** (`Assembly.lean`, `iter_diamond`, built on
-   the single-step `push_j`): a whole left-mover run of a thread pushes through a
-   non-`a` run, so a post-commit termination run can be merged into the main
-   trace. Depends only on `propext`.
-
-   With this, **every named lemma of the paper's Reduction proof is mechanized**
-   (Right/Left Commutativity, Diamond, Iterative Diamond, Post-Commit
-   Termination), plus the phase-generalized commutation, class invariance, and
-   tagged-run infrastructure the top-level argument needs.
-
-   What remains is the **top-level trace-block induction** (`(form:b)`/`(form:c)`):
-   the transaction bubble that extracts a thread's steps to the front of a run
-   (via the two adjacent swaps `right_commutes'` / `left_commutes`),
-   first-committer identification, the fatal-step diamond for the single
-   wrong-reaching step, and the outer induction that assembles these with
-   Post-Commit Termination and Iterative Diamond — a large but now
-   fully-equipped combinatorial development.
-
-So the honest status is: the **entire chain is assembled, every logic-level
-structural lemma is mechanized, and the mover-theoretic engines of both hard
-theorems are proved** (`right_commute_state` for Reduction; Consequence /
-inversion / Evaluation Context for Preservation). The two axioms isolate exactly
-the two remaining combinatorial developments above, and `#print axioms
-soundness` still lists precisely `reduction` and `preservation`.
+So the honest status: **the Reduction theorem is fully proved**, the entire
+soundness chain is assembled, and `#print axioms soundness'` lists precisely
+`preservation` (plus Lean's standard `propext`/`Classical.choice`/`Quot.sound`).
