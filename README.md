@@ -31,22 +31,24 @@ theorem** (`Reduction` → `ReductionThm` → `PostCommit` → `Assembly`).
 | `MoverLogic/Specs.lean`     | §"Mover Specifications" | Mover specs `M`, the lifted `M(A,P)` as a genuine least-upper-bound, the four **Validity** conditions |
 | `MoverLogic/Logic.lean`     | Figs. "proof rules"  | Predicate operators; the judgment `R,G ⊢ s : P ⇒ Q ! e` with every rule; function + state judgments |
 | `MoverLogic/Canonical.lean` | Lemmas Consequence / Evaluation Context | Canonical (non-`M-conseq`) form, `M-seq` inversion, and the Evaluation Context lemma — the structural core of Preservation |
+| `MoverLogic/Prefix.lean` | Lemma Prefix | `compP2` (the paper's `P';P`) and the **Prefix** lemma `Judg.prefix`, proved in its original unrestricted form (see "The Prefix lemma and the upper-bound rule forms" below) |
 | `MoverLogic/Reduction.lean` | Lemmas Right / Left Commutativity, Diamond | All state-level action/action commutation lemmas of Reduction — Right, Left, the parallel Diamond, and the store-preserving cases — derived from `Valid M` |
 | `MoverLogic/ReductionThm.lean` | §sec:red-thm (Reduction proof) | The **trace-composable** local-commutation layer: thread-indexed steps `→_i`, the state classes `ℝ_i`/`𝕃_i`/`ℕ_i`/`𝔼_i`, the step classifier, *absorbing wrong*, and `right_commutes` / `left_commutes` / `diamond_commutes` / `indep_*` covering **every** step kind (structural + store-touching, `I-action` + `I-if`) with all class side-conditions discharged |
 | `MoverLogic/PostCommit.lean` | Lemma lem:post-commit-term | The statement size metric `bodySize`, the model well-formedness the paper assumes (`NeverYields`, `CondTotal`, `GoodSizing` = atomic functions non-recursive), the `progress` engine, and **`post_commit_term`** / **`post_commit_lm`** — a post-commit thread of a verified state runs to a settled state under `↦` |
 | `MoverLogic/Assembly.lean` | §sec:red-thm (global argument) | The **complete Reduction proof**: length-indexed merge (`merge_wrongN`), mover-invariance (`mover_invariant`, `active_*_le_L`), the dischargeable wrong-commutation (`left_commutes_w'` + `interfered_branches_ne_E`), transaction extraction (`extract_committer`, `left_decompose`), the outer induction `reorder_core`, and finally **`reduction_proved`** and **`soundness'`** |
 | `MoverLogic/Soundness.lean` | Thm "Soundness"      | Not-Wrong for standard states; Soundness-modulo-Preservation |
-| `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, `embed`, and the `preservation` axiom (Reduction and the assembled Soundness are proved in `Assembly.lean`) |
+| `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, `embed` (Reduction and the assembled Soundness are proved in `Assembly.lean`) |
+| `MoverLogic/Preservation.lean` | Thm thm:pres + Lemmas lem:yield-stable / lem:ctxt-switch / lem:pres-redex | The **complete Preservation proof**: Yield Stabilization, Context Switch, Preservation for Redexes (fused with the Evaluation Context rebuild), and **`preservation`** / `preservation_star` |
 
 ## What is proved
 
 The whole development contains **no `sorry` and no `native_decide`**. Every
 result named in this section is machine-checked using **only Lean's standard
 axioms** (`propext` / `Classical.choice` / `Quot.sound`; verify with
-`#print axioms`). **The Reduction theorem is now fully mechanized** (it was
-previously taken as an axiom), so the *only* custom axiom left in the soundness
-chain is `preservation`; `#print axioms soundness'` lists exactly `preservation`
-plus the standard axioms and nothing else.
+`#print axioms`). **Both hard theorems — Reduction and Preservation — are now
+fully mechanized** (each was previously taken as an axiom), so the development
+is **axiom-free**: `#print axioms soundness'` lists exactly the standard
+axioms and nothing else.
 
 **Piece 1 — the mathematical core (fully proved).**
 - `Effect.seq_assoc`, `seq_B_left/right` — `(Effect, ;;, B)` is a monoid.
@@ -92,27 +94,20 @@ get `⊢ Π''`; contradict Not-Wrong. The `WF M D` hypothesis bundles the model
 well-formedness the paper assumes (`NeverYields`, `CondTotal`, `NeverError`, and
 non-recursive atomic functions via `GoodSizing`).
 
-**Proved with no `sorry`, only standard axioms (+ `preservation`):**
+**Proved with no `sorry`, only standard axioms:**
 - the instrumented semantics (rules I-*), preemptive `→` and non-preemptive `↦`;
 - `IStateValid.not_wrong` — Not-Wrong for instrumented states (Thm not-wrong);
 - `simulation` and `simulation_star` — the Simulation theorem and its closure;
 - `embed` — a verified standard state embeds into a verified instrumented one;
-- `preservation_star` — Preservation lifted along `↦*`;
+- **`preservation`** — Theorem thm:pres (the Evaluation-Context / Consequence /
+  Preservation-for-Redexes / Yield-Stabilization / Prefix / Context-Switch
+  inversion stack; see "The Preservation theorem, mechanized" below), stated
+  over the instrumented non-preemptive semantics (where it is *true* — unlike
+  step-wise preservation over the raw preemptive semantics, which is false and
+  is exactly what Reduction repairs), and `preservation_star`, its `↦*`-closure;
 - **`reduction_proved`** — Theorem thm:red, the Reduction theorem itself (see the
   next section);
 - `soundness'` — the final assembly.
-
-**The one remaining axiom** (`#print axioms soundness'` shows exactly this, plus
-Lean's standard `propext`/`Classical.choice`/`Quot.sound`):
-- `preservation` — Theorem thm:pres (proof: the Evaluation-Context / Consequence
-  / Preservation-for-Redexes / Yield-Stabilization / Prefix / Context-Switch
-  inversion stack), stated faithfully over the instrumented non-preemptive
-  semantics (where it is *true* — unlike step-wise preservation over the raw
-  preemptive semantics, which is false and is exactly what Reduction repairs).
-
-`Soundness.lean` additionally provides `soundness_of_preservation`, a variant
-that takes Preservation as an explicit **hypothesis** (no axioms at all), for a
-fully axiom-free conditional statement.
 
 ## The Reduction theorem, mechanized
 
@@ -164,28 +159,134 @@ the paper (§sec:red-thm) and is built bottom-up:
 
 `reduction_proved` feeds a preemptive-wrong run into `reorder_core` (`ISteps.toN`
 supplies the length), and `soundness'` re-assembles Soundness on top. Every one
-of these lemmas is machine-checked with only the standard axioms, or
-`preservation` for the post-commit steps.
+of these lemmas is machine-checked with only the standard axioms (the
+post-commit steps invoke the proved `preservation` theorem).
 
-### What is left: the Preservation axiom
+### The Prefix lemma and the upper-bound rule forms
 
-The single remaining axiom is `preservation`. Its **structural core is
-mechanized** in `Canonical.lean` (all verified, no `sorry`, standard axioms):
+Mechanizing Preservation surfaced a genuine bug in the paper. The **Prefix**
+lemma (paper `lem:prefix`) claims
 
-- `Judg.consequence` — the **Consequence** lemma (every derivation is a canonical
-  `JudgNC` up to weakening);
-- `Judg.inv_seq` — inversion for `M-seq` via the canonical form;
-- `Judg.eval_ctxt` — the **Evaluation Context** lemma (decompose a derivation of
-  `E[s]` into the redex `s` plus a context effect, with a rebuild principle).
+```
+∅,∅ ⊢ s : P ⇒ Q ! e     ⟹     R,G ⊢ s : (P';P) ⇒ (P';Q) ! e   for ALL P', R, G.
+```
 
-What remains for Preservation is the **Prefix** lemma
-(`⊢∅,∅ s : P⇒Q ! e ⟹ ⊢R,G s : (P';P)⇒(P';Q) ! e`): prefixing a precondition can
-only *shrink* a lifted mover effect, so an action's effect can drop below the
-left-mover threshold, at which point rule `M-action`'s totality side-condition
-must be re-discharged — a real proof obligation (the paper originally carried a
-validity condition making left-movers total, then folded totality into
-`M-action`). Discharging it rigorously is the remaining mechanization work.
+Under the paper's *original* rules — whose effect antecedents were equalities,
+e.g. `e = (M(A₁,P);e₁)*;M(A₂,P)` in `M-while` — **this is false**, and we
+machine-checked a counterexample (`PrefixCounterexample.lean` in the git
+history):
 
-So the honest status: **the Reduction theorem is fully proved**, the entire
-soundness chain is assembled, and `#print axioms soundness'` lists precisely
-`preservation` (plus Lean's standard `propext`/`Classical.choice`/`Quot.sound`).
+- Take `M := λ_ _ _. R` (everything a right-mover), `s := while [I·I] skip` (a
+  loop whose test never fails), `P := (a = σ₀)`, and a prefix `P' := (b = σ₁)`
+  with `σ₀ ≠ σ₁`.
+- The hypothesis holds: `∅,∅ ⊢ while [I·I] skip : P ⇒ P ! R` (loop effect
+  `(R;B)*;R = R`, side condition `¬(R ⊑ L)` ✓).
+- But `P';P` is **empty** (post-stores of `P'` are `{σ₁}`, pre-stores of `P` are
+  `{σ₀}`), so the claimed conclusion is `R,G ⊢ while [I·I] skip : ∅ ⇒ ∅ ! R`.
+  Inverting to canonical form forces the loop invariant empty, which collapses
+  both lifted movers to the lattice bottom `Y`; the recomputed loop effect is
+  then `⊑ L`, contradicting `M-while`'s `¬(e ⊑ L)` guard. No derivation
+  exists. ∎
+
+**Root cause.** `post(P';P) ⊆ post P`, so a lifted mover `M(A, P';P)` can only
+*shrink* relative to `M(A, P)` — down to `Y` when `P';P` is empty. An
+*equality* effect antecedent can therefore never be re-established under a
+prefixed precondition, and `M-while`'s recomputed effect can cross below the
+`¬(e ⊑ L)` guard. The paper's `M-while` case wrote "Thus …" and never
+re-checked either.
+
+**The fix: upper-bound antecedents.** Generalize the effect antecedents of
+`M-if` and `M-while` from equalities to upper bounds — the same generalization
+`M-action` already carries (`M(A,P) ⊑ e`):
+
+```
+M-if:     (M(A₁,P);e₁) ⊔ (M(A₂,P);e₂) ⊑ e
+M-while:  M(A₁,P);e₁ ⊑ R                     ← new antecedent
+          (M(A₁,P);e₁)* ; M(A₂,P) ⊑ e        ← was =
+          ¬(e ⊑ L)                            ← unchanged, on the ASCRIBED e
+```
+
+Soundness bookkeeping is preserved because both `M-while` side conditions are
+now stated on quantities stable under prefixing:
+
+- `¬(e ⊑ L)` on the *ascribed* effect governs placement — `p;e ≠ E` with
+  `p = N` forces `e ⊑ L`, so a loop can never sit post-commit — and the
+  ascribed effect is held fixed by Prefix.
+- The new `M(A₁,P);e₁ ⊑ R` — *each iteration is a right-mover* — prevents an
+  iteration from committing and looping again (the post-commit-divergence
+  pattern of the paper's `while(true)` footnote). It is implied by the old
+  rule (whose `¬(computed ⊑ L)` forced per-iteration effects into `{Y,B,R}`)
+  and it is monotone, hence Prefix-stable. It even *admits* sound programs the
+  old rule rejected, such as loops whose iterations commit and then yield
+  (`(L Y)*` blocks).
+
+Because `M-conseq` already allowed arbitrary effect weakening `e₁ ⊑ e`, the
+`⊑`-form rules derive essentially the same judgments — the change relocates
+weakening into the syntax-directed rules, which is exactly what canonical-form
+inversion (and hence Prefix) needs.
+
+With these rule forms, the Prefix lemma holds **in its original unrestricted
+form** — no hypothesis on `P'` — by pure monotonicity of `;`, `⊔`, `*`, and
+`M(A,·)`:
+
+```lean
+theorem Judg.prefix (P' R G : Pred2)
+    (hD : ∀ f spec body, D f = some (spec, body) → FnValid M D spec body)
+    (h : Judg M D botP botP s P Q e) :
+    Judg M D R G s (compP2 P' P) (compP2 P' Q) e
+```
+
+is **fully proved, no `sorry`, standard axioms only** (`#print axioms
+Judg.prefix`). `hD` (valid declaration table) discharges the `M-call-non-atomic`
+case, whose non-empty guarantee cannot sit under the empty root guarantee. A
+regression `example` in `Prefix.lean` pins the counterexample's judgment as now
+derivable, and `Effects.iter_seq_le` / `Effects.exit_le` machine-check the two
+finite lattice facts that the paper's loop-unfolding Preservation case needs
+under the `⊑`-form rules. The paper (`main.tex`) carries the matching rule
+changes, the corrected `M-while` case of `lem:prefix`, and the updated
+loop-unfolding case of Preservation for Redexes.
+
+## The Preservation theorem, mechanized
+
+Preservation (Theorem thm:pres) — *verification is preserved by every
+non-preemptive instrumented step* — is fully proved as
+`MoverLogic.preservation` in `Preservation.lean`, discharging the last axiom.
+The proof is the paper's inversion stack:
+
+- **Proof-theoretic core** (`Canonical.lean`, `Prefix.lean`):
+  `Judg.consequence` (the **Consequence** lemma), `Judg.inv_seq` (`M-seq`
+  inversion), `Judg.eval_ctxt` (the **Evaluation Context** lemma: canonical
+  redex + rebuild principle), and `Judg.prefix` (the **Prefix** lemma in its
+  original unrestricted form, above).
+- **Yield Stabilization** (`yield_stable`) — a parked (yielding) thread's
+  judgment is re-typed with the stabilized precondition `yield P R`, keeping
+  its effect. Mechanization surfaced a subtlety in the paper's `E[yield]`
+  case: the fresh `M-yield` instance must be applied at the *outer* `R,G`
+  (where `I ⟹ G` covers the diagonal stabilized precondition), not at the
+  redex's conseq-weakened rely/guarantee, whose guarantee need not be
+  reflexive — so the proof rebuilds the `M-seq` spine at `R,G` by an inner
+  induction on the context. The paper's proof is corrected accordingly.
+- **Context Switch** (`ctxt_switch`) — an all-yielding valid state re-anchors
+  at the current store with any thread active; the outgoing active thread's
+  yielding precondition is published to `G` and flows through compatibility
+  into every other thread's rely.
+- **Preservation for Redexes** — one case per instrumented step rule, fused
+  with the Evaluation Context rebuild inside `preservation_active`. The
+  atomic-call case is where `Judg.prefix` fires; the loop-unfolding case is
+  where the upper-bound `M-while` (via `iter_seq_le` / `exit_le`) fires; the
+  `wrong`-step rules are refuted from the `p;e ≠ E` bookkeeping.
+
+One formalization repair was needed: `IStateValid` quantifies the active
+thread index over all of `ℕ`, and with an out-of-range index nothing tied the
+sequence-initial store `σ₀` to the current store, making Preservation
+unprovable (the paper's rule I-state indexes an actual thread, so this is a
+Lean-model artifact, not a paper bug). `IStateValid` now carries the *anchor*
+conjunct `Pi.threads[a]? = none → σ₀ = Pi.store` — vacuous for genuine
+states and trivially supplied by `embed`.
+
+## Status
+
+**Both hard theorems are fully proved**: Reduction (`reduction_proved`) and
+Preservation (`preservation`). The entire soundness chain is assembled, and
+`#print axioms soundness'` lists precisely Lean's standard
+`propext`/`Classical.choice`/`Quot.sound` — no custom axioms, no `sorry`.

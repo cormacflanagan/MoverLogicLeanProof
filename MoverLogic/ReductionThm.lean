@@ -15,8 +15,9 @@
     * the trace-block decomposition `Post*; Pre*` and the block induction that
       merges post-commit termination traces via the Diamond property.
 
-  The only retained axiom is `preservation` (Theorem thm:pres), which the
-  paper's Reduction proof genuinely invokes.
+  The `preservation` theorem (Theorem thm:pres, proved in
+  `Preservation.lean`) is genuinely invoked by the Reduction proof, exactly as
+  in the paper.
 -/
 import MoverLogic.Reduction
 
@@ -561,8 +562,8 @@ commuted across threads (only the OK/structural cases above are needed).
   1. **Post-Commit Termination** (paper Lemma) — now *proved* in `PostCommit.lean`
      (`post_commit_term`), together with its `progress` engine, using the model
      well-formedness the paper assumes (`NeverYields`, `CondTotal`, and a
-     `GoodSizing` witness = atomic functions are non-recursive).  Depends only on
-     `preservation` plus the standard axioms.
+     `GoodSizing` witness = atomic functions are non-recursive), invoking the
+     proved `preservation` theorem along the run.
 
   2. **Iterative Diamond** — iterate `diamond_commutes` along a left-mover run to
      merge a post-commit termination trace into the main trace.

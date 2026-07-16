@@ -82,24 +82,28 @@ Fixed parameters: the mover specification `M` and declaration table `D`. -/
 /-- Mover-logic derivability, one constructor per proof rule in the paper. -/
 inductive Judg (M : MoverSpec) (D : Decls) :
     Pred2 → Pred2 → Stmt → Pred2 → Pred2 → Effect → Prop where
-  /-- **M-action**: `M(A,P) = e`, and if `e ⊑ L` then `A` is total. -/
+  /-- **M-action**: `M(A,P) ⊑ e`, and if `e ⊑ L` then `A` is total. -/
   | action {R G : Pred2} {A : Action} {P : Pred2} {e : Effect}
-      (he : M.lift A P = e) (htot : e ⊑ Effect.L → Total A) :
+      (he : M.lift A P ⊑ e) (htot : e ⊑ Effect.L → Total A) :
       Judg M D R G (.act A) P (compPA P A) e
   /-- **M-seq**. -/
   | seq {R G P Q1 Q2 : Pred2} {s1 s2 : Stmt} {e1 e2 : Effect}
       (h1 : Judg M D R G s1 P Q1 e1) (h2 : Judg M D R G s2 Q1 Q2 e2) :
       Judg M D R G (.seq s1 s2) P Q2 (e1 ;; e2)
-  /-- **M-if**. -/
+  /-- **M-if**: the ascribed effect bounds both branches' effects. -/
   | ite {R G P Q : Pred2} {C : CondAction} {s1 s2 : Stmt} {e e1 e2 : Effect}
       (h1 : Judg M D R G s1 (compPA P C.tru) Q e1)
       (h2 : Judg M D R G s2 (compPA P C.fls) Q e2)
-      (he : e = (M.lift C.tru P ;; e1) ⊔ (M.lift C.fls P ;; e2)) :
+      (he : (M.lift C.tru P ;; e1) ⊔ (M.lift C.fls P ;; e2) ⊑ e) :
       Judg M D R G (.ite C s1 s2) P Q e
-  /-- **M-while**: loop invariant `P`; effect must not be `⊑ L`. -/
+  /-- **M-while**: loop invariant `P`; each iteration is a right-mover
+      (`M(A₁,P);e₁ ⊑ R`, so an iteration cannot commit and keep looping); the
+      ascribed effect bounds the loop's effect and must not be `⊑ L` (so the
+      loop cannot be placed post-commit). -/
   | wloop {R G P : Pred2} {C : CondAction} {s : Stmt} {e e1 : Effect}
       (h1 : Judg M D R G s (compPA P C.tru) P e1)
-      (he : e = ((M.lift C.tru P ;; e1)^* ;; M.lift C.fls P))
+      (hiter : M.lift C.tru P ;; e1 ⊑ Effect.R)
+      (he : ((M.lift C.tru P ;; e1)^* ;; M.lift C.fls P) ⊑ e)
       (hnl : ¬ (e ⊑ Effect.L)) :
       Judg M D R G (.while C s) P (compPA P C.fls) e
   /-- **M-skip**. -/
@@ -181,7 +185,7 @@ theorem Judg.wrong_empty {M : MoverSpec} {D : Decls}
           exact ih1 E' hs1 t σ σ' hP
   | @ite R G P Q C s1 s2 e e1 e2 h1 h2 he ih1 ih2 =>
       intro E hE; exact absurd hE (by cases E <;> simp [Ctx.plug])
-  | @wloop R G P C s e e1 h1 he hnl ih1 =>
+  | @wloop R G P C s e e1 h1 hiter he hnl ih1 =>
       intro E hE; exact absurd hE (by cases E <;> simp [Ctx.plug])
   | @skip R G P =>
       intro E hE; exact absurd hE (by cases E <;> simp [Ctx.plug])

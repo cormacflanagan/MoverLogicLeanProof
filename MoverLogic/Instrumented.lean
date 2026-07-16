@@ -15,19 +15,17 @@
     * `simulation` / `simulation_star` — the Simulation theorem and its closure;
     * `embed`                      — a verified standard state embeds into a
                                      verified instrumented state (all yielding);
-    * `preservation_star`          — Preservation lifted along `↦*`;
     * `right_commute` / `left_commute` — the store-level commutativity at the
                                      heart of Reduction, derived from `Valid M`.
 
-  Reduction (Theorem thm:red) is **proved** downstream as
-  `MoverLogic.reduction_proved` (its trace-block algebra is mechanized across
-  `ReductionThm`/`PostCommit`/`Assembly`), and Soundness is assembled there as
-  `MoverLogic.soundness'`.  The only remaining axiom is:
-    * `preservation`  (Theorem thm:pres) — the inversion stack (Evaluation
-                        Context, Consequence, Preservation for Redexes, Yield
-                        Stabilization, Prefix, Context Switch) is not mechanized.
-  `#print axioms soundness'` shows exactly `preservation` (plus Lean's standard
-  axioms).
+  Both hard theorems are **proved** downstream, so the development is
+  axiom-free: Reduction (Theorem thm:red) as `MoverLogic.reduction_proved`
+  (its trace-block algebra is mechanized across `ReductionThm`/`PostCommit`/
+  `Assembly`, and Soundness is assembled there as `MoverLogic.soundness'`),
+  and Preservation (Theorem thm:pres) as `MoverLogic.preservation` in
+  `Preservation.lean` (the inversion stack: Evaluation Context, Consequence,
+  Preservation for Redexes, Yield Stabilization, Prefix, Context Switch).
+  `#print axioms soundness'` shows only Lean's standard axioms.
 -/
 import MoverLogic.Logic
 
@@ -135,12 +133,16 @@ def IWrong (Pi : IState) : Prop := ∃ sp ∈ Pi.threads, IsWrong sp.1
     `σ₀`, all function definitions valid, `M` valid, `G` reflexive, and for each
     thread a derivation whose phase-composed effect `pₜ ;; eₜ` avoids `E`, with
     the active thread relating `σ₀` to the current store and every other thread
-    yielding with a precondition over `σ₀`. -/
+    yielding with a precondition over `σ₀`.  The *anchor* conjunct pins `σ₀` to
+    the current store when the active index is out of range (e.g. the empty
+    state) — for genuine states it is vacuous, and without it `σ₀` would be
+    unmoored from the store, making Preservation unprovable. -/
 def IStateValid (M : MoverSpec) (D : Decls) (Pi : IState) : Prop :=
   ∃ (R G : Pred2) (a : Tid) (σ0 : Store),
     (∀ f spec body, D f = some (spec, body) → FnValid M D spec body) ∧
     Valid M ∧
     (∀ t σ, G t σ σ) ∧
+    (Pi.threads[a]? = none → σ0 = Pi.store) ∧
     (∀ t s p, Pi.threads[t]? = some (s, p) →
        ∃ P Q e, Judg M D R G s P Q e ∧ (p ;; e ≠ Effect.E) ∧ (Q ⟹ G) ∧
          (if t = a then P t σ0 Pi.store
@@ -154,7 +156,7 @@ def IStateValid (M : MoverSpec) (D : Decls) (Pi : IState) : Prop :=
 theorem IStateValid.not_wrong {M : MoverSpec} {D : Decls} {Pi : IState}
     (h : IStateValid M D Pi) : ¬ IWrong Pi := by
   rintro ⟨⟨s, p⟩, hmem, E, rfl⟩
-  obtain ⟨R, G, a, σ0, _hfns, _hvalid, _hrefl, hthreads, _hcompat⟩ := h
+  obtain ⟨R, G, a, σ0, _hfns, _hvalid, _hrefl, _hanchor, hthreads, _hcompat⟩ := h
   obtain ⟨i, hi, hget⟩ := List.getElem_of_mem hmem
   have hidx : Pi.threads[i]? = some (E.plug .wrong, p) := by
     rw [List.getElem?_eq_getElem hi, hget]
@@ -304,7 +306,7 @@ theorem embed {M : MoverSpec} {D : Decls} {st : State} (h : StateValid M D st) :
     ∃ Pi, IStateValid M D Pi ∧ Sim st Pi ∧ (∀ sp ∈ Pi.threads, yielding sp.1) ∧ PhaseRN Pi := by
   obtain ⟨R, G, hfns, hvalid, hrefl, hthreads, hcompat⟩ := h
   refine ⟨⟨st.threads.map (fun s => (s, Effect.R)), st.store⟩, ?_, ?_, ?_, phaseRN_map_R⟩
-  · refine ⟨R, G, 0, st.store, hfns, hvalid, hrefl, ?_, hcompat⟩
+  · refine ⟨R, G, 0, st.store, hfns, hvalid, hrefl, fun _ => rfl, ?_, hcompat⟩
     intro t s p hidx
     -- decode the mapped thread list: recover `st.threads[t]? = some s` and `p = R`
     have hmap : (st.threads[t]?).map (fun x => (x, Effect.R)) = some (s, p) := by
@@ -329,39 +331,27 @@ theorem embed {M : MoverSpec} {D : Decls} {st : State} (h : StateValid M D st) :
     obtain ⟨_, _, _, _, _, _, hy, _⟩ := hthreads i s0 hidx
     rw [← hsp]; exact Or.inl hy
 
-/-! ### The two hard theorems, as faithful axioms
+/-! ### The two hard theorems
 
 `reduction` (Theorem thm:red) and `preservation` (Theorem thm:pres) are the
-paper's two deepest results.  Their proofs — the trace-block algebra
-(`Pre`/`Post`/`Finish` decomposition, Right/Left Commutativity, Diamond,
-Iterative Diamond, Post-Commit Termination) for Reduction; and the inversion
-stack (Evaluation Context, Consequence, Preservation for Redexes, Yield
-Stabilization, Prefix, Context Switch) for Preservation — are not mechanized
-here.  We state them faithfully and take them as axioms; `#print axioms
-soundness` exposes exactly this dependency. -/
+paper's two deepest results.  Both are now **mechanized**:
 
--- **Reduction (Theorem thm:red)** is *no longer an axiom*: it is mechanized as
--- `MoverLogic.reduction_proved` in `Assembly.lean` (from the trace-block algebra
--- built across `ReductionThm`/`PostCommit`/`Assembly`), and `soundness'` there
--- re-assembles Soundness with no `reduction` axiom.  Only `preservation` remains.
+* **Reduction** is proved as `MoverLogic.reduction_proved` in `Assembly.lean`
+  (from the trace-block algebra built across `ReductionThm`/`PostCommit`/
+  `Assembly`), and `soundness'` there re-assembles Soundness on top.
+* **Preservation** is proved as `MoverLogic.preservation` in
+  `Preservation.lean` (from the inversion stack: Evaluation Context,
+  Consequence, Preservation for Redexes, Yield Stabilization, Prefix,
+  Context Switch), together with its `↦*`-closure `preservation_star`.
 
-/-- **Preservation (Theorem thm:pres).**  Verification is preserved by a single
-    non-preemptive instrumented step. -/
-axiom preservation {M : MoverSpec} {D : Decls} {Pi Pi' : IState} :
-    IStateValid M D Pi → INonStep M D.bodies Pi Pi' → IStateValid M D Pi'
-
-/-- Preservation lifted along `↦*` (mechanized from single-step `preservation`). -/
-theorem preservation_star {M : MoverSpec} {D : Decls} {Pi Pi' : IState}
-    (hs : INonSteps M D.bodies Pi Pi') : IStateValid M D Pi → IStateValid M D Pi' := by
-  induction hs with
-  | refl => exact fun h => h
-  | step hstep _ ih => exact fun h => ih (preservation h hstep)
+No axioms remain: `#print axioms soundness'` shows only Lean's standard
+axioms. -/
 
 /-! ### Store-level commutativity — the crux of Reduction, from `Valid`
 
 These are the mover-commutativity facts (paper Lemmas Right/Left Commutativity)
 at the level of stores, obtained directly from mover-spec validity.  They are
-the mathematical core on which the (axiomatized) state-level Reduction rests. -/
+the mathematical core on which the state-level Reduction proof rests. -/
 
 /-- Right-movers commute *after* a following non-mover (Validity (1)). -/
 theorem right_commute {M : MoverSpec} (hV : Valid M) {t u : Tid} {A1 A2 : Action}

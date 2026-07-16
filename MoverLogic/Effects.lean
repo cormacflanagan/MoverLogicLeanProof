@@ -175,8 +175,26 @@ def star : Effect → Effect
 postfix:max "^*" => star
 
 theorem star_idem (e : Effect) : (e^*)^* = e^* := by cases e <;> rfl
+/-- Iterative closure is monotone w.r.t. `⊑`. -/
+theorem star_mono {a b : Effect} (h : a ⊑ b) : a^* ⊑ b^* := by
+  revert h; cases a <;> cases b <;> decide
 /-- Repeating a starred effect adds nothing: `e* ; e* = e*`. -/
 theorem seq_star_star (e : Effect) : e^* ;; e^* = e^* := by cases e <;> rfl
+
+/-! Two finite lattice facts justifying the loop-unfolding case of the paper's
+Preservation-for-Redexes lemma, for the upper-bound form of rule `M-while`
+(iteration effect `x = M(A₁,P);e₁ ⊑ R`, loop effect `x*;m₂ ⊑ e`, `¬(e ⊑ L)`). -/
+
+/-- A right-mover iteration prefixed to the loop effect stays below it:
+    if `x ⊑ R` and `¬(e ⊑ L)` then `x ; e ⊑ e`. -/
+theorem iter_seq_le {x e : Effect} (hx : x ⊑ R) (he : ¬ (e ⊑ L)) : x ;; e ⊑ e := by
+  revert hx he; cases x <;> cases e <;> decide
+
+/-- The loop-exit mover is below the declared loop effect:
+    if `x ⊑ R`, `x* ; m ⊑ e`, and `¬ (e ⊑ L)` then `m ⊑ e`. -/
+theorem exit_le {x m e : Effect} (hx : x ⊑ R) (hm : x^* ;; m ⊑ e) (he : ¬ (e ⊑ L)) :
+    m ⊑ e := by
+  revert hx hm he; cases x <;> cases m <;> cases e <;> decide
 /-- One iteration is dominated by the closure: `e ⊑ e*` unless `e = N`
     (`N* = E` because two non-movers cannot form one reducible block). -/
 theorem le_star (e : Effect) (h : e ≠ N) : e ⊑ e^* := by cases e <;> simp_all <;> decide

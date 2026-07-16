@@ -540,7 +540,7 @@ theorem post_commit_lm {M : MoverSpec} {D : Decls}
     obtain ⟨ths, σst⟩ := Pi
     obtain ⟨s_i, p_i, hget_i, hpN, hnot⟩ := hL
     subst hpN
-    obtain ⟨R, G, a, σ0, hfns, hVal, hrefl, hthreads, hcompat⟩ := hval
+    obtain ⟨R, G, a, σ0, hfns, hVal, hrefl, hanchor, hthreads, hcompat⟩ := hval
     obtain ⟨P, Q, e, hJ, hne, hQG, hpre⟩ := hthreads i s_i Effect.N hget_i
     by_cases hia : i = a
     · rw [if_pos hia] at hpre
@@ -572,7 +572,7 @@ theorem post_commit_lm {M : MoverSpec} {D : Decls}
           exact ⟨⟨ths.set i (s_i', Effect.N), σ'⟩, INonSteps.step hnonstep (INonSteps.refl _),
             iwrong_iff_clE.2 ⟨i, s_i', Effect.N, hset_i, hwrong⟩⟩
       · have hval' : IStateValid M D ⟨ths.set i (s_i', Effect.N), σ'⟩ :=
-          preservation ⟨R, G, a, σ0, hfns, hVal, hrefl, hthreads, hcompat⟩ hnonstep
+          preservation ⟨R, G, a, σ0, hfns, hVal, hrefl, hanchor, hthreads, hcompat⟩ hnonstep
         have hlt : bodySize fs s_i' < n := Nat.lt_of_lt_of_le hsz' (hsz s_i Effect.N hget_i)
         have hok : ¬ clE (⟨ths.set i (s_i', Effect.N), σ'⟩ : IState) i := by
           rintro ⟨s, p, hg, hw⟩
@@ -1364,7 +1364,7 @@ theorem active_redex_judg {M : MoverSpec} {D : Decls} {a : Tid} {Pmid : IState}
     (hns : ¬ (yielding (E.plug redex) ∨ IsWrong (E.plug redex))) :
     ∃ (R1 G1 P1 Q1 : Pred2) (e1 : Effect) (σ0 : Store),
       JudgNC M D R1 G1 redex P1 Q1 e1 ∧ e1 ⊑ Effect.L ∧ P1 a σ0 Pmid.store := by
-  obtain ⟨R, G, av, σ0, hfns, hVal, hrefl, hthreads, hcompat⟩ := hval
+  obtain ⟨R, G, av, σ0, hfns, hVal, hrefl, _hanchor, hthreads, hcompat⟩ := hval
   obtain ⟨P, Q, e, hJ, hne, hQG, hpre⟩ := hthreads a (E.plug redex) Effect.N hget
   have hpre_a : P a σ0 Pmid.store := by
     by_cases hia : a = av
@@ -1384,7 +1384,7 @@ theorem active_action_le_L {M : MoverSpec} {D : Decls} {a : Tid} {Pmid : IState}
     M A a Pmid.store ⊑ Effect.L := by
   obtain ⟨R1, G1, P1, Q1, e1, σ0, hnc, he1L, hP1⟩ := active_redex_judg E hval hget hns
   cases hnc with
-  | action he htot => exact le_trans (he ▸ M.le_lift A P1 hP1) he1L
+  | action he htot => exact le_trans (le_trans (M.le_lift A P1 hP1) he) he1L
 
 /-- Both branch movers of a committer's conditional redex are left-movers. -/
 theorem active_branches_le_L {M : MoverSpec} {D : Decls} {a : Tid} {Pmid : IState}
@@ -1396,9 +1396,9 @@ theorem active_branches_le_L {M : MoverSpec} {D : Decls} {a : Tid} {Pmid : IStat
   obtain ⟨R1, G1, P1, Q1, e1, σ0, hnc, he1L, hP1⟩ := active_redex_judg E hval hget hns
   cases hnc with
   | ite h1 h2 he =>
-      rw [he] at he1L
-      exact ⟨le_trans (M.le_lift C.tru P1 hP1) (seq_le_L_imp_le_L (le_trans (le_join_left _ _) he1L)),
-             le_trans (M.le_lift C.fls P1 hP1) (seq_le_L_imp_le_L (le_trans (le_join_right _ _) he1L))⟩
+      have he1L' := le_trans he he1L
+      exact ⟨le_trans (M.le_lift C.tru P1 hP1) (seq_le_L_imp_le_L (le_trans (le_join_left _ _) he1L')),
+             le_trans (M.le_lift C.fls P1 hP1) (seq_le_L_imp_le_L (le_trans (le_join_right _ _) he1L'))⟩
 
 /-- Composing phase `N` with a left-mover never errors (`N ;; {Y,B,L} ∈ {R,N}`). -/
 theorem N_seq_le_L_ne_E {b : Effect} (hb : b ⊑ Effect.L) : Effect.N ;; b ≠ Effect.E := by
@@ -1890,8 +1890,8 @@ unfinished-block count without a separate block datatype:
 
 `reduction_proved` feeds a preemptive-wrong run (via `ISteps.toN`) into
 `reorder_core`, and `soundness'` re-assembles Soundness on top of it.
-`#print axioms soundness'` = `[propext, Classical.choice, preservation,
-Quot.sound]` — the `reduction` axiom is discharged; only `preservation` remains.
-No `sorry`/`admit`/`native_decide`. -/
+`#print axioms soundness'` = `[propext, Classical.choice, Quot.sound]` — both
+the `reduction` and `preservation` axioms are discharged; the development is
+axiom-free.  No `sorry`/`admit`/`native_decide`. -/
 
 end MoverLogic

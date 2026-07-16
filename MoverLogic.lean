@@ -19,8 +19,10 @@ import MoverLogic.Language
 import MoverLogic.Specs
 import MoverLogic.Logic
 import MoverLogic.Canonical
+import MoverLogic.Prefix
 import MoverLogic.Soundness
 import MoverLogic.Instrumented
+import MoverLogic.Preservation
 import MoverLogic.Reduction
 import MoverLogic.ReductionThm
 import MoverLogic.PostCommit

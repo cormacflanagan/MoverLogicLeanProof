@@ -16,11 +16,13 @@
                             atomic functions are non-recursive (paper: "`f()` is
                             not (directly or indirectly) recursive").
 
-  Post-Commit Termination additionally invokes the `preservation` axiom to carry
-  `⊢ Pi` forward along the run (as in the paper).
+  Post-Commit Termination additionally invokes the `preservation` theorem
+  (proved in `Preservation.lean`) to carry `⊢ Pi` forward along the run (as in
+  the paper).
 -/
 import MoverLogic.ReductionThm
 import MoverLogic.Canonical
+import MoverLogic.Preservation
 
 namespace MoverLogic
 
@@ -121,7 +123,7 @@ theorem progress {M : MoverSpec} {D : Decls} (hNY : NeverYields M) (hCT : CondTo
           have he1L : e1 ⊑ Effect.L := le_trans he1 heL
           obtain ⟨σ', hA⟩ := htot he1L i σ
           have hmL : M A i σ ⊑ Effect.L :=
-            le_trans (he ▸ M.le_lift A P1 (hPP i σ0 σ hP)) he1L
+            le_trans (le_trans (M.le_lift A P1 (hPP i σ0 σ hP)) he) he1L
           have hNN : Effect.N ;; M A i σ = Effect.N := N_seq_eq_N_of_le_L hmL (hNY A i σ)
           have hne : Effect.N ;; M A i σ ≠ Effect.E := by rw [hNN]; decide
           have step := IThreadStep.iaction_ok (M := M) (D := D.bodies) (t := i) .hole A σ σ' _ hA hne
@@ -148,14 +150,14 @@ theorem progress {M : MoverSpec} {D : Decls} (hNY : NeverYields M) (hCT : CondTo
       intro R G P Q e σ hJ heL hP hns
       obtain ⟨R1, G1, P1, Q1, e1, hR, hG, hPP, hQ, he1, hnc⟩ := hJ.consequence
       cases hnc with
-      | wloop h1 he hnl => exact absurd (le_trans he1 heL) hnl
+      | wloop h1 hiter he hnl => exact absurd (le_trans he1 heL) hnl
   | ite C s1 s2 _ih1 _ih2 =>
       intro R G P Q e σ hJ heL hP hns
       obtain ⟨R1, G1, P1, Q1, e1, hR, hG, hPP, hQ, he1, hnc⟩ := hJ.consequence
       cases hnc with
       | ite h1 h2 he =>
           have hP1 : P1 i σ0 σ := hPP i σ0 σ hP
-          have hjoinL := he ▸ (le_trans he1 heL : e1 ⊑ Effect.L)
+          have hjoinL := le_trans he (le_trans he1 heL : e1 ⊑ Effect.L)
           have hjtL := le_trans (le_join_left _ _) hjoinL
           have hjfL := le_trans (le_join_right _ _) hjoinL
           rcases hCT C i σ with ⟨σ', hAtru⟩ | ⟨σ', hAfls⟩
@@ -205,7 +207,7 @@ theorem post_commit_term {M : MoverSpec} {D : Decls}
     obtain ⟨ths, σst⟩ := Pi
     obtain ⟨s_i, p_i, hget_i, hpN, hnot⟩ := hL
     subst hpN
-    obtain ⟨R, G, a, σ0, hfns, hVal, hrefl, hthreads, hcompat⟩ := hval
+    obtain ⟨R, G, a, σ0, hfns, hVal, hrefl, hanchor, hthreads, hcompat⟩ := hval
     obtain ⟨P, Q, e, hJ, hne, hQG, hpre⟩ := hthreads i s_i Effect.N hget_i
     by_cases hia : i = a
     · rw [if_pos hia] at hpre
@@ -224,7 +226,7 @@ theorem post_commit_term {M : MoverSpec} {D : Decls}
       · exact ⟨⟨ths.set i (s_i', Effect.N), σ'⟩, INonSteps.step hnonstep (INonSteps.refl _),
           ⟨s_i', Effect.N, hset_i, hset⟩⟩
       · have hval' : IStateValid M D ⟨ths.set i (s_i', Effect.N), σ'⟩ :=
-          preservation ⟨R, G, a, σ0, hfns, hVal, hrefl, hthreads, hcompat⟩ hnonstep
+          preservation ⟨R, G, a, σ0, hfns, hVal, hrefl, hanchor, hthreads, hcompat⟩ hnonstep
         have hlt : bodySize fs s_i' < n := Nat.lt_of_lt_of_le hsz' (hsz s_i Effect.N hget_i)
         obtain ⟨Pi'', hsteps'', hclN''⟩ :=
           ih (bodySize fs s_i') hlt ⟨ths.set i (s_i', Effect.N), σ'⟩ i hval'

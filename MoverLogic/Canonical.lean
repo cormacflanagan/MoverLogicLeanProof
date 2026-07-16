@@ -29,7 +29,7 @@ so premises refer to the full `Judg`). -/
 inductive JudgNC (M : MoverSpec) (D : Decls) :
     Pred2 → Pred2 → Stmt → Pred2 → Pred2 → Effect → Prop where
   | action {R G : Pred2} {A : Action} {P : Pred2} {e : Effect}
-      (he : M.lift A P = e) (htot : e ⊑ Effect.L → Total A) :
+      (he : M.lift A P ⊑ e) (htot : e ⊑ Effect.L → Total A) :
       JudgNC M D R G (.act A) P (compPA P A) e
   | seq {R G P Q1 Q2 : Pred2} {s1 s2 : Stmt} {e1 e2 : Effect}
       (h1 : Judg M D R G s1 P Q1 e1) (h2 : Judg M D R G s2 Q1 Q2 e2) :
@@ -37,11 +37,12 @@ inductive JudgNC (M : MoverSpec) (D : Decls) :
   | ite {R G P Q : Pred2} {C : CondAction} {s1 s2 : Stmt} {e e1 e2 : Effect}
       (h1 : Judg M D R G s1 (compPA P C.tru) Q e1)
       (h2 : Judg M D R G s2 (compPA P C.fls) Q e2)
-      (he : e = (M.lift C.tru P ;; e1) ⊔ (M.lift C.fls P ;; e2)) :
+      (he : (M.lift C.tru P ;; e1) ⊔ (M.lift C.fls P ;; e2) ⊑ e) :
       JudgNC M D R G (.ite C s1 s2) P Q e
   | wloop {R G P : Pred2} {C : CondAction} {s : Stmt} {e e1 : Effect}
       (h1 : Judg M D R G s (compPA P C.tru) P e1)
-      (he : e = ((M.lift C.tru P ;; e1)^* ;; M.lift C.fls P))
+      (hiter : M.lift C.tru P ;; e1 ⊑ Effect.R)
+      (he : ((M.lift C.tru P ;; e1)^* ;; M.lift C.fls P) ⊑ e)
       (hnl : ¬ (e ⊑ Effect.L)) :
       JudgNC M D R G (.while C s) P (compPA P C.fls) e
   | skip {R G P : Pred2} : JudgNC M D R G .skip P P Effect.B
@@ -63,7 +64,7 @@ theorem JudgNC.toJudg {M D R G s P Q e} (h : JudgNC M D R G s P Q e) :
   | action he htot => exact .action he htot
   | seq h1 h2 => exact .seq h1 h2
   | ite h1 h2 he => exact .ite h1 h2 he
-  | wloop h1 he hnl => exact .wloop h1 he hnl
+  | wloop h1 hiter he hnl => exact .wloop h1 hiter he hnl
   | skip => exact .skip
   | wrong => exact .wrong
   | yield hG hQ => exact .yield hG hQ
@@ -86,9 +87,9 @@ theorem Judg.consequence {M D R G s P Q e} (h : Judg M D R G s P Q e) :
   | @ite R G P Q C s1 s2 e e1 e2 h1 h2 he _ _ =>
       exact ⟨R, G, P, Q, e, Implies2.refl _, Implies2.refl _, Implies2.refl _,
         Implies2.refl _, le_refl _, .ite h1 h2 he⟩
-  | @wloop R G P C s e e1 h1 he hnl _ =>
+  | @wloop R G P C s e e1 h1 hiter he hnl _ =>
       exact ⟨R, G, P, compPA P C.fls, e, Implies2.refl _, Implies2.refl _, Implies2.refl _,
-        Implies2.refl _, le_refl _, .wloop h1 he hnl⟩
+        Implies2.refl _, le_refl _, .wloop h1 hiter he hnl⟩
   | @skip R G P =>
       exact ⟨R, G, P, P, Effect.B, Implies2.refl _, Implies2.refl _, Implies2.refl _,
         Implies2.refl _, le_refl _, .skip⟩
