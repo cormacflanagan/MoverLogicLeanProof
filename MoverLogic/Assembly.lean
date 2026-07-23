@@ -151,7 +151,7 @@ second step of thread `j` may reach `wrong`.  An assertion (`I-if` landing on a
 *instrumented* wrong step (`I-action`/`I-if` error) is reconstructed from the
 swapped store via its re-fire capability — the error effect transports by
 validity (3) and the branch witness by validity (1), needing only `NeverError`.
-This is the paper's I-if error case (`main.tex`, commented out). -/
+This is the paper's I-if error case (commented out in the paper source). -/
 
 theorem right_commutes_w {M : MoverSpec} {D : BodyEnv} (hV : Valid M) (hNE : NeverError M)
     {i j : Tid} (hij : i ≠ j) {Pa Pb Pc : IState}

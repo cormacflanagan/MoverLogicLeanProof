@@ -2,16 +2,17 @@
 
 A self-contained Lean 4 formalization of the program logic from
 **"Mover Logic: A Concurrent Program Logic for Reduction and Rely-Guarantee
-Reasoning"** (Flanagan & Freund, ECOOP 2024) — the paper in this repository
-(`final/main.tex`).
+Reasoning"** (Cormac Flanagan and Stephen N. Freund, ECOOP 2024).
 
-Nothing in the existing repository is modified; this all lives under `lean/`.
+The mechanization surfaced two bugs in the paper's proofs — the Prefix lemma
+was false under the original rule forms, and the Yield Stabilization argument
+applied a rule at the wrong rely/guarantee pair — both documented and corrected
+below. A revised version of the paper incorporates the matching fixes.
 
 ## Build
 
 ```bash
-cd lean
-~/.elan/bin/lake build          # ~5s, no Mathlib dependency
+lake build          # ~5s, no Mathlib dependency
 ```
 
 Toolchain: `leanprover/lean4:v4.32.0` (pinned in `lean-toolchain`, installed via
@@ -172,9 +173,11 @@ lemma (paper `lem:prefix`) claims
 ```
 
 Under the paper's *original* rules — whose effect antecedents were equalities,
-e.g. `e = (M(A₁,P);e₁)*;M(A₂,P)` in `M-while` — **this is false**, and we
-machine-checked a counterexample (`PrefixCounterexample.lean` in the git
-history):
+e.g. `e = (M(A₁,P);e₁)*;M(A₂,P)` in `M-while` — **this is false**. During
+development we machine-checked a counterexample against the original rule
+forms (the file predates this repository's rule change and is not retained;
+its argument is spelled out below, and a regression `example` in `Prefix.lean`
+pins its judgment as derivable under the corrected rules):
 
 - Take `M := λ_ _ _. R` (everything a right-mover), `s := while [I·I] skip` (a
   loop whose test never fails), `P := (a = σ₀)`, and a prefix `P' := (b = σ₁)`
@@ -242,8 +245,8 @@ case, whose non-empty guarantee cannot sit under the empty root guarantee. A
 regression `example` in `Prefix.lean` pins the counterexample's judgment as now
 derivable, and `Effects.iter_seq_le` / `Effects.exit_le` machine-check the two
 finite lattice facts that the paper's loop-unfolding Preservation case needs
-under the `⊑`-form rules. The paper (`main.tex`) carries the matching rule
-changes, the corrected `M-while` case of `lem:prefix`, and the updated
+under the `⊑`-form rules. The revised paper carries the matching rule
+changes, the corrected `M-while` case of the Prefix lemma, and the updated
 loop-unfolding case of Preservation for Redexes.
 
 ## The Preservation theorem, mechanized
