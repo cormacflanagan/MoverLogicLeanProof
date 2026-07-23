@@ -11,7 +11,8 @@
   bookkeeping and all) from the store-level `right_commute` (validity (1)) and
   the effect-invariance condition (validity (3)).  Fully proved, no `sorry`.
 
-  What remains for the *full* Reduction theorem is documented at the end.
+  The rest of the Reduction theorem is mechanized downstream, in
+  `ReductionThm.lean`, `PostCommit.lean`, and `Assembly.lean`.
 -/
 import MoverLogic.Instrumented
 
@@ -295,7 +296,7 @@ theorem diamond_parallel {M : MoverSpec} {D : BodyEnv} (hV : Valid M)
         = ⟨(ths.set i (ri', pi ;; M Ai i σ)).set j (rj', Effect.N ;; M Aj j σ), σ'''⟩ := by rw [hfin]
     exact this ▸ step
 
-/-! ### What remains for the full Reduction theorem
+/-! ### The rest of the Reduction theorem
 
 The complete local-commutation toolkit of the Reduction proof is now mechanized,
 for *all* store-touching cases (`I-action` and `I-if` alike, via `ActionLike`)
@@ -309,16 +310,14 @@ and the store-preserving cases, all from `Valid M`:
 The `I-if` cases are obtained by passing `actionLike_ite_tru`/`actionLike_ite_fls`
 in place of `actionLike_action`.
 
-What remains for the full theorem is purely combinatorial (no more mover theory):
+The rest of the theorem is purely combinatorial (no more mover theory) and is
+mechanized downstream:
 
-  * **Iterative Diamond** (iterating `diamond_parallel` along a left-mover run);
-  * **Post-Commit Termination**, which invokes the (still axiomatized)
-    Preservation theorem;
-  * the global **trace-block induction**: decompose any `→*` run as
-    `Post*; Pre*`, then induct on the number of unfinished post-commit blocks.
-
-That trace-level argument is a large separate development; the top-level
-`reduction` axiom in `Instrumented.lean` remains, now backed by mechanized
-proofs of all of its local commutativity lemmas. -/
+  * the **Iterative Diamond** (iterating `diamond_parallel` along a left-mover
+    run) — `iter_diamond` / `iter_diamondN` in `Assembly.lean`;
+  * **Post-Commit Termination** — `post_commit_term` in `PostCommit.lean`,
+    invoking the proved `preservation` theorem;
+  * the global **trace-block induction** — `reorder_core` in `Assembly.lean`,
+    culminating in `reduction_proved` and the re-assembled `soundness'`. -/
 
 end MoverLogic

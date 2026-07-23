@@ -1,23 +1,21 @@
 /-
-  The Reduction Theorem (Theorem thm:red), mechanized.
+  The Reduction Theorem (Theorem thm:red): the trace-composable
+  local-commutation layer.
 
-  This file discharges the `reduction` axiom of `Instrumented.lean`, proving it
-  as a theorem.  It follows the paper's proof structure (§sec:red-thm):
+  Following the paper's proof structure (§sec:red-thm), this file provides:
 
     * indexed preemptive steps `→_i` and the state classes `ℝ_i`, `𝕃_i`,
       `ℕ_i`, `𝔼_i`;
     * the eight structural properties of evaluation;
     * clean thread-indexed commutation lemmas (Right, Left, Diamond,
       Independent), lifting the state-level engines of `Reduction.lean` and
-      covering the "other thread goes wrong" cases;
-    * Post-Commit Termination (from `preservation` + `Valid M` + M-action
-      totality);
-    * the trace-block decomposition `Post*; Pre*` and the block induction that
-      merges post-commit termination traces via the Diamond property.
+      covering the "other thread goes wrong" cases.
 
-  The `preservation` theorem (Theorem thm:pres, proved in
-  `Preservation.lean`) is genuinely invoked by the Reduction proof, exactly as
-  in the paper.
+  The theorem is completed downstream: Post-Commit Termination in
+  `PostCommit.lean` (which genuinely invokes the `preservation` theorem of
+  `Preservation.lean`, exactly as in the paper) and the global trace-block
+  argument in `Assembly.lean`, culminating in `reduction_proved` and the
+  re-assembled `soundness'`.
 -/
 import MoverLogic.Reduction
 
@@ -531,7 +529,7 @@ theorem diamond_commutes {M : MoverSpec} {D : BodyEnv} (hV : Valid M) {i j : Tid
         · exact absurd ⟨sj', pj', getElem?_set_self_of _ _ (lt_of_getElem? hgetj), hwj⟩ hjok
     · exact absurd ⟨si', pi', getElem?_set_self_of ths (si', pi') hilt, hw⟩ hiok
 
-/-! ### Status: what is proved here, and what remains for the `reduction` axiom
+/-! ### Status: the local-commutation layer, complete
 
 This file mechanizes the **entire local-commutation layer of the Reduction
 theorem in trace-composable, thread-indexed form** — the interface the global
@@ -557,25 +555,23 @@ side-conditions.  The supporting facts — the step classifier
 keep the fatal step *inside* its thread's transaction, so no wrong step is ever
 commuted across threads (only the OK/structural cases above are needed).
 
-**What remains to discharge the `reduction` axiom:**
+The remaining ingredients of the Reduction theorem are proved downstream:
 
-  1. **Post-Commit Termination** (paper Lemma) — now *proved* in `PostCommit.lean`
-     (`post_commit_term`), together with its `progress` engine, using the model
+  1. **Post-Commit Termination** (paper Lemma) — `post_commit_term` in
+     `PostCommit.lean`, together with its `progress` engine, using the model
      well-formedness the paper assumes (`NeverYields`, `CondTotal`, and a
      `GoodSizing` witness = atomic functions are non-recursive), invoking the
      proved `preservation` theorem along the run.
 
-  2. **Iterative Diamond** — iterate `diamond_commutes` along a left-mover run to
-     merge a post-commit termination trace into the main trace.
+  2. **Iterative Diamond** — `iter_diamond` / `iter_diamondN` in `Assembly.lean`:
+     iterate `diamond_commutes` along a left-mover run to merge a post-commit
+     termination trace into the main trace.
 
-  3. The **global block-decomposition induction** — extract each thread's
-     transaction (commit-ordered) to the front via the commutation lemmas above,
-     using (1)+(2) to close off unfinished post-commit blocks.  This is the
-     `Post*; Pre*` / `Finish*` argument of the paper's Reduction proof.
-
-The `reduction` axiom in `Instrumented.lean` therefore stands, now backed by a
-`sorry`-free, trace-composable mechanization of *all four* of its local
-commutation lemmas, the absorbing-wrong bookkeeping, and Post-Commit
-Termination.  Only Iterative Diamond and the global block induction remain. -/
+  3. The **global block-decomposition induction** — `reorder_core` in
+     `Assembly.lean`: extract each thread's transaction (commit-ordered) to the
+     front via the commutation lemmas above, using (1)+(2) to close off
+     unfinished post-commit blocks — the `Post*; Pre*` / `Finish*` argument of
+     the paper's Reduction proof, culminating in `reduction_proved` and the
+     re-assembled `soundness'`. -/
 
 end MoverLogic

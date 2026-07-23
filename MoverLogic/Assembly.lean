@@ -1766,9 +1766,9 @@ theorem soundness' {M : MoverSpec} {D : Decls} (hwf : WF M D) {st : State}
     reduction_proved hwf hPival hphase hyield ⟨Pi', histeps, hiwrong⟩
   exact (preservation_star hnon hPival).not_wrong hiwrong''
 
-/-! ### Status: named lemmas complete; top-level assembly remaining
+/-! ### Status: the Reduction proof, complete
 
-Every **named lemma** of the paper's Reduction proof (§sec:red-thm) is now
+Every **named lemma** of the paper's Reduction proof (§sec:red-thm) is
 mechanized, `sorry`-free.  This file adds, on top of the commutation layer of
 `ReductionThm.lean` and Post-Commit Termination of `PostCommit.lean`:
 
@@ -1781,9 +1781,10 @@ mechanized, `sorry`-free.  This file adds, on top of the commutation layer of
   * `NonJRun` / `LMRun` — the "main trace" and "left-mover run" shapes;
   * **`push_j`** and **`iter_diamond`** — the **Iterative Diamond** (Lemma
     lem:iter-diamond): push a whole left-mover run of `a` through a non-`a` run;
-  * **`bubble_left`** — the post-commit bubble: move a left-mover `a`-step to the
-    front of a non-`a` prefix (the primitive that extracts a post-commit thread's
-    steps to the head of a run);
+  * **`bubble_left`** / **`bubble_green`** — the **post-commit** and **pre-commit
+    bubbles**: move an `a`-step (left-mover; or any step — including the fatal
+    one — past a green prefix) to the front of a run (the primitive that
+    extracts a post-commit thread's steps to the head of a run);
   * **`right_commutes_w`** / **`left_commutes_w`** / **`diamond_commutes_w`** — the
     **wrong-case** Right/Left Commutativity and Diamond, following the paper's
     commented-out I-if error case: an instrumented-wrong step commutes like any
@@ -1792,10 +1793,6 @@ mechanized, `sorry`-free.  This file adds, on top of the commutation layer of
     (`I-if` to a `wrong` statement) are ordinary store-touching steps handled by
     the ok branch; a post-commit *conditional* reducibility violation is vacuous
     for a verified state and carried as the side condition `hjno_iif`;
-  * **`push_j`** / **`iter_diamond`** — the **Iterative Diamond**;
-  * **`bubble_left`** / **`bubble_green`** — the **post-commit** and **pre-commit
-    bubbles**: move an `a`-step (left-mover; or any step — including the fatal
-    one — past a green prefix) to the front of a run;
   * **`push_c_wrong`** / **`merge_wrong`** — the **merge**: a post-commit
     termination run of `a` is merged into a non-`a` main trace ending in the
     *fatal step* of another thread `c`, which still reaches wrong from the end of
@@ -1831,10 +1828,9 @@ mechanized, `sorry`-free.  This file adds, on top of the commutation layer of
     `IStepsTn.trans` (summing lengths) and `NonJRunN.toIStepsTn`.  And
     **`LAMixN`** / **`partition_left_n`** (with `LMRun.dest_not_wrong`) — the
     length-indexed left-mover partition that produces the `LMRun` + `NonJRunN`
-    pair `merge_wrongN` consumes.  **Done.**
+    pair `merge_wrongN` consumes.
 
-  * **Obligation (2) core — a committed thread cannot go wrong**: three facts, all
-    verified.
+  * **Obligation (2) core — a committed thread cannot go wrong**: three facts.
       - `mover_invariant` (`istep_mover_invariant` + `nonjrun_mover_invariant`) —
         by validity (3) a non-`a` step cannot change any of `a`'s action effects,
         so along a non-`a` run `a`'s movers are *invariant*.
@@ -1857,7 +1853,7 @@ mechanized, `sorry`-free.  This file adds, on top of the commutation layer of
     (`mover_invariant`) the same mover effect as at its last verified state, where
     (`active_*_le_L`) it is `⊑ L` and so cannot compose to `E`.  Plus the
     all-yielding / left-mover-run glue (`AllYielding`, `allYielding_of`,
-    `LMRun.toINonSteps` / `.phaseRN` / `.othersYield_end`).  **Done.**
+    `LMRun.toINonSteps` / `.phaseRN` / `.othersYield_end`).
 
   * **Obligation (2) wiring — the usable wrong-case commutation**:
     **`ithreadstep_classify2`** (a `classify` variant whose instrumented-wrong
@@ -1866,9 +1862,9 @@ mechanized, `sorry`-free.  This file adds, on top of the commutation layer of
     Commutativity restated with a *dischargeable* `hjno_iif` (the conditional-only
     form `interfered_branches_ne_E` supplies), replacing `left_commutes_w`'s
     over-general `∀ A` side condition.  This is what lets `(form:b)` absorb a
-    committer's fatal wrong step into its block.  **Done** (`propext`-only).
+    committer's fatal wrong step into its block.
 
-**The top-level assembly is complete.**  Instead of the paper's explicit
+**The top-level assembly.**  Instead of the paper's explicit
 `Post*; Pre*` block algebra, the outer induction `reorder_core` uses the measure
 `2 * n + w` (run length `n`, with `w ∈ {0,1}` distinguishing an all-yielding start
 from a single post-commit-active thread) — which captures the paper's
