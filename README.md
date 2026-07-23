@@ -5,7 +5,7 @@ A self-contained Lean 4 formalization of the program logic from
 Reasoning"** (Cormac Flanagan and Stephen N. Freund, ECOOP 2024).
 
 The mechanization surfaced two bugs in the paper's proofs — the Prefix lemma
-was false under the original rule forms, and the Yield Stabilization argument
+didn't hold for one case, and the Yield Stabilization argument
 applied a rule at the wrong rely/guarantee pair — both documented and corrected
 below. A revised version of the paper incorporates the matching fixes.
 
