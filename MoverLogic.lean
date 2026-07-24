@@ -31,3 +31,4 @@ import MoverLogic.ReductionThm
 import MoverLogic.PostCommit
 import MoverLogic.Assembly
 import MoverLogic.Examples
+import MoverLogic.ValidSpec

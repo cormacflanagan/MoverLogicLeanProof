@@ -506,5 +506,97 @@ theorem cond2 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
     intro g2 R2 hc2 hd2 hPσ
     exact (test_guard_pres hc2 hd2 hPframe σ).mpr hPσ
 
+/-! ### Condition (4): a non-mover cannot make a left-mover in another thread
+block — the diamond. -/
+
+theorem commute_diam_lt_any {A1 A2 : Action} {t u : Tid} {σ σ' σ'' : Store}
+    {g1 : Store → Store} {guard1 : Store → Prop} (hne : t ≠ u)
+    (F1 : Fires A1 t g1 (owns t) guard1)
+    (hg1refire : ∀ {g2 : Store → Store} {R2 : Var → Prop}, Confined g2 R2 →
+      (∀ v, R2 v → owns t v → False) → guard1 σ → guard1 (g2 σ))
+    (hN2 : MspecV A2 u σ ⊑ Effect.N) (h1 : A1 t σ σ') (h2 : A2 u σ σ'') :
+    ∃ σ''', A2 u σ' σ''' ∧ A1 t σ'' σ''' := by
+  obtain ⟨g2, R2, guard2, F2, hRdisj, hgpres⟩ := extract_other hne hN2
+  obtain ⟨hg1σ, e1⟩ := (F1.char σ σ').mp h1
+  obtain ⟨hg2σ, e2⟩ := (F2.char σ σ'').mp h2
+  refine commute_diamond F1 F2 (fun v hR1 hR2 => hRdisj v hR2 hR1) ?_ ?_ h1 h2
+  · rw [e1]; exact (hgpres F1.conf σ).mpr hg2σ
+  · rw [e2]; exact hg1refire F2.conf hRdisj hg1σ
+
+theorem commute_diam_shared_lt {A1 A2 : Action} {t u : Tid} {σ σ' σ'' : Store}
+    {g1 : Store → Store} {R1 : Var → Prop} {guard1 : Store → Prop}
+    (F1 : Fires A1 t g1 R1 guard1) (hR1disj : ∀ v, R1 v → owns u v → False)
+    (hg1refire : ∀ (g2 : Store → Store), (∀ s, g2 s LOCK = s LOCK) → guard1 σ → guard1 (g2 σ))
+    (hg1σ : guard1 σ) (hlt : IsLocal A2 u ∨ IsTest A2 u)
+    (h1 : A1 t σ σ') (h2 : A2 u σ σ'') :
+    ∃ σ''', A2 u σ' σ''' ∧ A1 t σ'' σ''' := by
+  obtain ⟨g2, guard2, F2, hgpres⟩ := extract_lt hlt
+  obtain ⟨_, e1⟩ := (F1.char σ σ').mp h1
+  obtain ⟨hg2σ, e2⟩ := (F2.char σ σ'').mp h2
+  have hg2l : ∀ s, g2 s LOCK = s LOCK := fun s => lock_pres F2.conf (not_owns_l u) s
+  refine commute_diamond F1 F2 (fun v hR1 ho => hR1disj v hR1 ho) ?_ ?_ h1 h2
+  · rw [e1]; exact (hgpres F1.conf hR1disj σ).mpr hg2σ
+  · rw [e2]; exact hg1refire g2 hg2l hg1σ
+
+theorem cond4 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
+    (hne : t ≠ u) (hN : MspecV A1 t σ ⊑ Effect.N) (h1 : A1 t σ σ')
+    (hL : MspecV A2 u σ ⊑ Effect.L) (h2 : A2 u σ σ'') :
+    ∃ σ''', A2 u σ' σ''' ∧ A1 t σ'' σ''' := by
+  have hA2u : (IsRel A2 u ∨ IsXacc A2 u) → σ LOCK = (u : Value) := by
+    rintro (h | h)
+    · exact ((h σ σ'').mp h2).1
+    · obtain ⟨g, _, _, hch⟩ := h; exact ((hch σ σ'').mp h2).1
+  rcases le_N_cases hN with hA1 | hA1 | hA1 | hA1 | hA1
+  · -- A1 = acquire: σ l = free
+    have hf : σ LOCK = FREE := ((hA1 σ σ').mp h1).1
+    rcases le_L_cases hL with h | h | h | h
+    · exact absurd (hf ▸ hA2u (.inl h)) (free_ne_tid u)
+    · exact commute_diam_shared_lt (acq_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
+        (fun g2 hg2 hg => by change g2 σ LOCK = FREE; rw [hg2]; exact hg) hf (.inl h) h1 h2
+    · exact absurd (hf ▸ hA2u (.inr h)) (free_ne_tid u)
+    · exact commute_diam_shared_lt (acq_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
+        (fun g2 hg2 hg => by change g2 σ LOCK = FREE; rw [hg2]; exact hg) hf (.inr h) h1 h2
+  · -- A1 = release: σ l = t
+    have ht : σ LOCK = (t : Value) := ((hA1 σ σ').mp h1).1
+    rcases le_L_cases hL with h | h | h | h
+    · exact absurd ((ht ▸ hA2u (.inl h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
+    · exact commute_diam_shared_lt (rel_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
+        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ht (.inl h) h1 h2
+    · exact absurd ((ht ▸ hA2u (.inr h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
+    · exact commute_diam_shared_lt (rel_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
+        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ht (.inr h) h1 h2
+  · -- A1 = local
+    obtain ⟨g1, F1⟩ := local_fires hA1
+    exact commute_diam_lt_any hne F1 (fun _ _ h => h) (le_trans hL (by decide)) h1 h2
+  · -- A1 = x-access: σ l = t
+    obtain ⟨g1, hc1, hlk1, hch1⟩ := hA1
+    have F1 : Fires A1 t g1 (fun v => owns t v ∨ v = XVAR) (fun σ => σ LOCK = (t : Value)) := ⟨hc1, hch1⟩
+    have ht : σ LOCK = (t : Value) := ((hch1 σ σ').mp h1).1
+    have hdisj : ∀ v, (owns t v ∨ v = XVAR) → owns u v → False := by
+      rintro v (hv | hv) ho
+      · exact hne (owns_disjoint hv ho)
+      · exact not_owns_x u (hv ▸ ho)
+    rcases le_L_cases hL with h | h | h | h
+    · exact absurd ((ht ▸ hA2u (.inl h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
+    · exact commute_diam_shared_lt F1 hdisj
+        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ht (.inl h) h1 h2
+    · exact absurd ((ht ▸ hA2u (.inr h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
+    · exact commute_diam_shared_lt F1 hdisj
+        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ht (.inr h) h1 h2
+  · -- A1 = test
+    obtain ⟨P, hPframe, hch⟩ := hA1
+    have F1 : Fires A1 t (fun σ => σ) (owns t) P :=
+      ⟨confined_id _, by intro a b; rw [hch a b]; exact and_comm⟩
+    refine commute_diam_lt_any hne F1 ?_ (le_trans hL (by decide)) h1 h2
+    intro g2 R2 hc2 hd2 hPσ
+    exact (test_guard_pres hc2 hd2 hPframe σ).mpr hPσ
+
+/-- **`MspecV` is valid** — all four conditions, with no assumption. -/
+theorem MspecV_valid : Valid MspecV where
+  right := fun _ _ _ _ _ _ _ hne hR h1 hN h2 => cond1 hne hR h1 hN h2
+  left := fun _ _ _ _ _ _ _ hne hN h1 hL h2 => cond2 hne hN h1 hL h2
+  effect := cond3
+  nonblock := fun _ _ _ _ _ _ _ hne hN h1 hL h2 => cond4 hne hN h1 hL h2
+
 end ValidSpec
 end MoverLogic
