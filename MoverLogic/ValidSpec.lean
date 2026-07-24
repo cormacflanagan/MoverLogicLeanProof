@@ -428,5 +428,83 @@ theorem cond1 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
     · rw [show σ' = σ from e1] at hg2σ'; exact hg2σ'
     · exact (test_guard_pres F2.conf (fun v hR2 ho => hRdisj v hR2 ho) hPframe σ).mpr hPσ
 
+/-- Commute an `A1` confined to `owned(t)` (local/test) with the following `A2`
+    (any non-error): the symmetric partner of `commute_shared_lt`, used when the
+    *left*-mover `A2` is the shared one. -/
+theorem commute_lt_any {A1 A2 : Action} {t u : Tid} {σ σ' σ'' : Store}
+    {g1 : Store → Store} {guard1 : Store → Prop}
+    (hne : t ≠ u) (F1 : Fires A1 t g1 (owns t) guard1)
+    (hg1refire : ∀ {g2 : Store → Store} {R2 : Var → Prop}, Confined g2 R2 →
+      (∀ v, R2 v → owns t v → False) → guard1 σ → guard1 (g2 σ))
+    (hN2 : MspecV A2 u σ' ⊑ Effect.N) (h1 : A1 t σ σ') (h2 : A2 u σ' σ'') :
+    ∃ σ''', A2 u σ σ''' ∧ A1 t σ''' σ'' := by
+  obtain ⟨g2, R2, guard2, F2, hRdisj, hgpres⟩ := extract_other hne hN2
+  obtain ⟨hg1σ, e1⟩ := (F1.char σ σ').mp h1
+  obtain ⟨hg2σ', _⟩ := (F2.char σ' σ'').mp h2
+  refine commute_seq F1 F2 (fun v hR1 hR2 => hRdisj v hR2 hR1) ?_ (hg1refire F2.conf hRdisj hg1σ) h2 h1
+  rw [e1] at hg2σ'; exact (hgpres F1.conf σ).mp hg2σ'
+
+theorem free_ne_tid (u : Tid) : FREE ≠ (u : Value) := (t_ne_free u).symm
+
+/-! ### Condition (2): a left-mover commutes before a preceding non-mover.
+
+We case on `A1` (the non-mover): if it is confined to `owned(t)` it commutes with
+the left-mover `A2` for free; if it is a lock op / x-access, then `A2` local/test
+commutes and `A2` lock-contending is impossible (the lock already reads `t`/free). -/
+theorem cond2 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
+    (hne : t ≠ u) (hN : MspecV A1 t σ ⊑ Effect.N) (h1 : A1 t σ σ')
+    (hL : MspecV A2 u σ' ⊑ Effect.L) (h2 : A2 u σ' σ'') :
+    ∃ σ''', A2 u σ σ''' ∧ A1 t σ''' σ'' := by
+  -- A2 lock-contending (rel/xacc) reads `σ' l = u`.
+  have hA2u : (IsRel A2 u ∨ IsXacc A2 u) → σ' LOCK = (u : Value) := by
+    rintro (h | h)
+    · exact ((h σ' σ'').mp h2).1
+    · obtain ⟨g, _, _, hch⟩ := h; exact ((hch σ' σ'').mp h2).1
+  rcases le_N_cases hN with hA1 | hA1 | hA1 | hA1 | hA1
+  · -- A1 = acquire: σ' l = t
+    have hlt : σ' LOCK = (t : Value) := post_lock_t_acq hA1 h1
+    rcases le_L_cases hL with h | h | h | h
+    · exact absurd ((hlt ▸ hA2u (.inl h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
+    · exact commute_shared_lt (acq_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
+        (fun g2 hg2 hg => by change g2 σ LOCK = FREE; rw [hg2]; exact hg) ((hA1 σ σ').mp h1).1 (.inl h) h1 h2
+    · exact absurd ((hlt ▸ hA2u (.inr h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
+    · exact commute_shared_lt (acq_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
+        (fun g2 hg2 hg => by change g2 σ LOCK = FREE; rw [hg2]; exact hg) ((hA1 σ σ').mp h1).1 (.inr h) h1 h2
+  · -- A1 = release: σ' l = free
+    have hlf : σ' LOCK = FREE := by obtain ⟨_, e⟩ := (hA1 σ σ').mp h1; rw [e, upd_same]
+    rcases le_L_cases hL with h | h | h | h
+    · exact absurd ((hlf ▸ hA2u (.inl h)) : (FREE:Value) = (u:Value)) (free_ne_tid u)
+    · exact commute_shared_lt (rel_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
+        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ((hA1 σ σ').mp h1).1 (.inl h) h1 h2
+    · exact absurd ((hlf ▸ hA2u (.inr h)) : (FREE:Value) = (u:Value)) (free_ne_tid u)
+    · exact commute_shared_lt (rel_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
+        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ((hA1 σ σ').mp h1).1 (.inr h) h1 h2
+  · -- A1 = local: commutes with any A2 (⊑ L ⟹ ⊑ N)
+    obtain ⟨g1, F1⟩ := local_fires hA1
+    exact commute_lt_any hne F1 (fun _ _ h => h) (le_trans hL (by decide)) h1 h2
+  · -- A1 = x-access: σ' l = t
+    obtain ⟨g1, hc1, hlk1, hch1⟩ := hA1
+    have F1 : Fires A1 t g1 (fun v => owns t v ∨ v = XVAR) (fun σ => σ LOCK = (t : Value)) := ⟨hc1, hch1⟩
+    have hlt : σ' LOCK = (t : Value) := post_lock_t_xacc hlk1 hch1 h1
+    have hg1σ : σ LOCK = (t : Value) := ((hch1 σ σ').mp h1).1
+    have hdisj : ∀ v, (owns t v ∨ v = XVAR) → owns u v → False := by
+      rintro v (hv | hv) ho
+      · exact hne (owns_disjoint hv ho)
+      · exact not_owns_x u (hv ▸ ho)
+    rcases le_L_cases hL with h | h | h | h
+    · exact absurd ((hlt ▸ hA2u (.inl h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
+    · exact commute_shared_lt F1 hdisj
+        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) hg1σ (.inl h) h1 h2
+    · exact absurd ((hlt ▸ hA2u (.inr h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
+    · exact commute_shared_lt F1 hdisj
+        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) hg1σ (.inr h) h1 h2
+  · -- A1 = test: commutes with any A2
+    obtain ⟨P, hPframe, hch⟩ := hA1
+    have F1 : Fires A1 t (fun σ => σ) (owns t) P :=
+      ⟨confined_id _, by intro a b; rw [hch a b]; exact and_comm⟩
+    refine commute_lt_any hne F1 ?_ (le_trans hL (by decide)) h1 h2
+    intro g2 R2 hc2 hd2 hPσ
+    exact (test_guard_pres hc2 hd2 hPframe σ).mpr hPσ
+
 end ValidSpec
 end MoverLogic
