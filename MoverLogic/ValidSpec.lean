@@ -2,15 +2,19 @@
   A concrete, sync-disciplined mover specification that is *provably valid* —
   discharging `Valid` (Definition "Validity") outright, with no assumption.
 
-  The idea: classify an action purely by its *shape* (store-independently), so
-  that validity condition (3) — one thread's step cannot change another's mover
-  effect — is trivial.  The mover classes are:
+  Classification is by an action's *shape*, and reads the store only through one
+  cell (the lock, and only for a release).  The mover classes are:
 
-    * lock **acquire** `⟨l=free ∧ l:=tid⟩`         → right-mover `R`
-    * lock **release** `⟨l=tid ∧ l:=free⟩`         → left-mover  `L`
+    * lock **acquire** `⟨l=free ∧ l:=tid⟩`  → right-mover `R` (may block; total not
+      required, since `R` movers need no "terminates" side condition)
+    * lock **release** `l:=free`, **total and unconditional** → left-mover `L`
+      *exactly when the releaser holds the lock* (`σ(l)=tid`), else error `E`.
+      Making release total (no guard) is what lets it be used in `M-action` at
+      effect `L`; the "left-mover only while held" is store-dependent, and stays
+      valid because a thread's acquire/release never flips another thread's lock
+      ownership (condition (3), `MspecV_stable`).
     * a **local** write (to a variable *owned* by the acting thread) → `B`
-    * a **lock-protected** write to the shared `x` (the action itself only fires
-      while the thread holds the lock) → `B`
+    * a **lock-protected** write to the shared `x` → `B`
     * a store-preserving **test** whose guard reads only owned variables → `B`
     * anything else                                → error `E`
 
@@ -21,11 +25,12 @@
 
   **`MspecV_valid : Valid MspecV`** is proved outright — all four validity
   conditions of Definition "Validity", with *no* hypothesis — using only the
-  three standard axioms.  This is what lets a whole-state `⊢ Σ` (rule `M-state`)
-  be discharged without assuming the mover spec valid.  The disciplined program
-  actions are shown to classify as the paper's movers against this valid spec:
-  `MspecV_acquire_le` (`R`), `MspecV_release_le` (`L`), and `xWrite_isXacc` (a
-  lock-protected `x`-access is a both-mover — the sync discipline on `x`).
+  three standard axioms.  On top of it, **`acqRel_state_valid`** verifies a
+  two-thread lock **acquire/release** state via `M-state` with *no* validity
+  hypothesis (the `Valid MspecV` premise discharged by `MspecV_valid`, not
+  assumed).  The disciplined actions classify as the paper's movers:
+  `MspecV_acquire_le` (`R`), `MspecV_release_le` (`L`, given the lock is held),
+  `xWrite_isXacc` (a lock-protected `x`-access is a both-mover).
 -/
 import MoverLogic.Logic
 
@@ -96,9 +101,11 @@ property of the *relation* `A` — independent of any current store. -/
 def IsAcq (A : Action) (t : Tid) : Prop :=
   ∀ σ σ', A t σ σ' ↔ (σ LOCK = FREE ∧ σ' = upd σ LOCK (t : Value))
 
-/-- Release: `l : tid → free`, fires only while holding the lock. -/
+/-- Release: `l := free`, **unconditional and total** (no guard).  Its mover
+    effect is store-*dependent* (below): a left-mover exactly when the releaser
+    holds the lock. -/
 def IsRel (A : Action) (t : Tid) : Prop :=
-  ∀ σ σ', A t σ σ' ↔ (σ LOCK = (t : Value) ∧ σ' = upd σ LOCK FREE)
+  ∀ σ σ', A t σ σ' ↔ σ' = upd σ LOCK FREE
 
 /-- A local action: a deterministic `g` confined to the variables owned by `t`. -/
 def IsLocal (A : Action) (t : Tid) : Prop :=
@@ -116,11 +123,14 @@ def IsTest (A : Action) (t : Tid) : Prop :=
     ∀ σ σ', A t σ σ' ↔ (σ' = σ ∧ P σ)
 
 open Classical in
-/-- **The mover specification.**  Store-independent: the effect depends only on
-    the action's shape, which makes validity condition (3) immediate. -/
-noncomputable def MspecV : MoverSpec := fun A t _ =>
+/-- **The mover specification.**  Almost store-independent: only a release reads
+    the store, and only its lock cell — a release is a left-mover exactly when the
+    releaser holds the lock (`σ l = tid`), else an error (releasing a lock you do
+    not hold is not a mover).  This is the synchronization discipline on the lock,
+    and it keeps the total release usable in `M-action` while staying valid. -/
+noncomputable def MspecV : MoverSpec := fun A t σ =>
   if IsAcq A t then Effect.R
-  else if IsRel A t then Effect.L
+  else if IsRel A t then (if σ LOCK = (t : Value) then Effect.L else Effect.E)
   else if IsLocal A t then Effect.B
   else if IsXacc A t then Effect.B
   else if IsTest A t then Effect.B
@@ -156,10 +166,10 @@ theorem acq_fires (h : IsAcq A t) :
     Fires A t (fun σ => upd σ LOCK (t : Value)) (fun w => w = LOCK) (fun σ => σ LOCK = FREE) :=
   ⟨confined_constUpd _ _, by intro σ σ'; rw [h σ σ']⟩
 
-/-- Release fires as the `{l}`-confined `l := free`, guarded by `l = tid`. -/
+/-- Release fires as the `{l}`-confined `l := free`, **total** (guard `True`). -/
 theorem rel_fires (h : IsRel A t) :
-    Fires A t (fun σ => upd σ LOCK FREE) (fun w => w = LOCK) (fun σ => σ LOCK = (t : Value)) :=
-  ⟨confined_constUpd _ _, by intro σ σ'; rw [h σ σ']⟩
+    Fires A t (fun σ => upd σ LOCK FREE) (fun w => w = LOCK) (fun _ => True) :=
+  ⟨confined_constUpd _ _, by intro σ σ'; rw [h σ σ']; simp⟩
 
 /-- A local action fires unguarded as its `owned(t)`-confined function. -/
 theorem local_fires (h : IsLocal A t) :
@@ -201,7 +211,10 @@ theorem le_R_cases {A t σ} (h : MspecV A t σ ⊑ Effect.R) :
   · exact .inl h1
   · rw [if_neg h1] at h
     by_cases h2 : IsRel A t
-    · rw [if_pos h2] at h; exact absurd h (by decide)
+    · rw [if_pos h2] at h
+      by_cases hlk : σ LOCK = (t : Value)
+      · rw [if_pos hlk] at h; exact absurd h (by decide)
+      · rw [if_neg hlk] at h; exact absurd h (by decide)
     · rw [if_neg h2] at h
       by_cases h3 : IsLocal A t
       · exact .inr (.inl h3)
@@ -220,7 +233,9 @@ theorem le_N_cases {A t σ} (h : MspecV A t σ ⊑ Effect.N) :
   · exact .inl h1
   · rw [if_neg h1] at h
     by_cases h2 : IsRel A t
-    · exact .inr (.inl h2)
+    · by_cases hlk : σ LOCK = (t : Value)
+      · exact .inr (.inl h2)
+      · rw [if_pos h2, if_neg hlk] at h; exact absurd h (by decide)
     · rw [if_neg h2] at h
       by_cases h3 : IsLocal A t
       · exact .inr (.inr (.inl h3))
@@ -239,7 +254,9 @@ theorem le_L_cases {A t σ} (h : MspecV A t σ ⊑ Effect.L) :
   · rw [if_pos h1] at h; exact absurd h (by decide)
   · rw [if_neg h1] at h
     by_cases h2 : IsRel A t
-    · exact .inl h2
+    · by_cases hlk : σ LOCK = (t : Value)
+      · exact .inl h2
+      · rw [if_pos h2, if_neg hlk] at h; exact absurd h (by decide)
     · rw [if_neg h2] at h
       by_cases h3 : IsLocal A t
       · exact .inr (.inl h3)
@@ -250,6 +267,23 @@ theorem le_L_cases {A t σ} (h : MspecV A t σ ⊑ Effect.L) :
           by_cases h5 : IsTest A t
           · exact .inr (.inr (.inr h5))
           · rw [if_neg h5] at h; exact absurd h (by decide)
+
+/-- A total release is never an acquire. -/
+theorem isRel_not_isAcq {A t} (h : IsRel A t) : ¬ IsAcq A t := by
+  intro hacq
+  have h1 : A t (fun _ => (0 : Value)) (upd (fun _ => (0 : Value)) LOCK FREE) := (h _ _).mpr rfl
+  exact absurd ((hacq _ _).mp h1).1 (by decide)
+
+/-- **A release is a mover only while its thread holds the lock.**  If a release's
+    effect is non-error at `σ`, then `σ(l) = tid` — the sync discipline made
+    usable in the validity conditions. -/
+theorem rel_classified {A u σ} (hrel : IsRel A u) (h : MspecV A u σ ⊑ Effect.N) :
+    σ LOCK = (u : Value) := by
+  unfold MspecV at h
+  rw [if_neg (isRel_not_isAcq hrel), if_pos hrel] at h
+  by_cases hlk : σ LOCK = (u : Value)
+  · exact hlk
+  · rw [if_neg hlk] at h; exact absurd h (by decide)
 
 /-! ### Guard/value preservation across a disjoint confined action -/
 
@@ -296,6 +330,7 @@ theorem commute_diamond {A1 A2 t u σ σ' σ'' g1 g2 R1 R2 guard1 guard2}
 
 theorem t_ne_free (t : Tid) : (t : Value) ≠ FREE := by
   show (↑t : Int) ≠ -1; omega
+theorem free_ne_tid (u : Tid) : FREE ≠ (u : Value) := (t_ne_free u).symm
 theorem tid_cast_inj {t u : Tid} (h : (t : Value) = (u : Value)) : t = u := by
   exact_mod_cast h
 
@@ -307,6 +342,41 @@ theorem post_lock_t_xacc {A : Action} {t : Tid} {σ σ' : Store} {g : Store → 
     (hch : ∀ σ σ', A t σ σ' ↔ (σ LOCK = (t : Value) ∧ σ' = g σ)) (h1 : A t σ σ') :
     σ' LOCK = (t : Value) := by
   obtain ⟨hguard, e⟩ := (hch σ σ').mp h1; rw [e, hg]; exact hguard
+
+/-- **The classification of `A2` (by `u`) is unchanged by a mover step of `t ≠ u`.**
+    Only a release reads the store (its lock cell), and a `t`-mover keeps
+    `σ(l) = u ↔ σ'(l) = u` — so validity condition (3) still holds. -/
+theorem MspecV_stable {A1 A2 : Action} {t u : Tid} {σ σ' : Store}
+    (hne : t ≠ u) (hN : MspecV A1 t σ ⊑ Effect.N) (h1 : A1 t σ σ') :
+    MspecV A2 u σ = MspecV A2 u σ' := by
+  have hlock : σ LOCK = (u : Value) ↔ σ' LOCK = (u : Value) := by
+    rcases le_N_cases hN with h | h | h | h | h
+    · have e1 := post_lock_t_acq h h1
+      have e0 := ((h σ σ').mp h1).1
+      constructor <;> intro hh
+      · rw [e0] at hh; exact absurd hh.symm (t_ne_free u)
+      · rw [e1] at hh; exact absurd (tid_cast_inj hh) hne
+    · have hσl := rel_classified h hN
+      have hσ' : σ' LOCK = FREE := by rw [(h σ σ').mp h1, upd_same]
+      constructor <;> intro hh
+      · rw [hσl] at hh; exact absurd (tid_cast_inj hh) hne
+      · rw [hσ'] at hh; exact absurd hh.symm (t_ne_free u)
+    · obtain ⟨g1, hc1, hch1⟩ := h
+      rw [show σ' LOCK = σ LOCK by rw [(hch1 σ σ').mp h1]; exact lock_pres hc1 (not_owns_l t) σ]
+    · obtain ⟨g1, hc1, hlk1, hch1⟩ := h
+      rw [show σ' LOCK = σ LOCK by rw [((hch1 σ σ').mp h1).2]; exact hlk1 σ]
+    · obtain ⟨P, _, hch1⟩ := h
+      rw [show σ' = σ from ((hch1 σ σ').mp h1).1]
+  unfold MspecV
+  by_cases hacq : IsAcq A2 u
+  · rw [if_pos hacq, if_pos hacq]
+  · rw [if_neg hacq, if_neg hacq]
+    by_cases hrel : IsRel A2 u
+    · rw [if_pos hrel, if_pos hrel]
+      by_cases hh : σ LOCK = (u : Value)
+      · rw [if_pos hh, if_pos (hlock.mp hh)]
+      · rw [if_neg hh, if_neg (mt hlock.mpr hh)]
+    · rw [if_neg hrel, if_neg hrel]
 
 /-- **Extraction bundle for the "other" action** `A2` (thread `u ≠ t`) from its
     non-error effect: a firing witness whose region is disjoint from `owned(t)`,
@@ -320,8 +390,7 @@ theorem extract_other {A2 : Action} {u t : Tid} {σ0 : Store} (hne : t ≠ u)
   rcases le_N_cases h with h | h | h | h | h
   · refine ⟨_, _, _, acq_fires h, fun v hv ho => not_owns_l t (hv ▸ ho), ?_⟩
     intro g hc s; change (g s LOCK = FREE) ↔ (s LOCK = FREE); rw [hlock hc s]
-  · refine ⟨_, _, _, rel_fires h, fun v hv ho => not_owns_l t (hv ▸ ho), ?_⟩
-    intro g hc s; change (g s LOCK = (u : Value)) ↔ (s LOCK = (u : Value)); rw [hlock hc s]
+  · exact ⟨_, _, _, rel_fires h, fun v hv ho => not_owns_l t (hv ▸ ho), fun _ _ => Iff.rfl⟩
   · obtain ⟨g2, F2⟩ := local_fires h
     exact ⟨g2, owns u, (fun _ => True), F2, fun v hv ho => hne (owns_disjoint ho hv),
       fun _ _ => Iff.rfl⟩
@@ -349,10 +418,10 @@ theorem extract_lt {A2 : Action} {u : Tid} (h : IsLocal A2 u ∨ IsTest A2 u) :
     refine ⟨_, P, ⟨confined_id (owns u), ?_⟩, fun hc hdisj s => test_guard_pres hc hdisj hPframe s⟩
     intro σ σ'; rw [hch σ σ']; exact and_comm
 
-/-! ### Condition (3): immediate — the effect is store-independent. -/
+/-! ### Condition (3): a mover of `t` cannot change `u`'s effect (via `MspecV_stable`). -/
 theorem cond3 : ∀ (t u : Tid) (A1 A2 : Action) (σ σ' : Store) (e : Effect),
     t ≠ u → MspecV A1 t σ ⊑ Effect.N → A1 t σ σ' → MspecV A2 u σ = e → MspecV A2 u σ' = e :=
-  fun _ _ _ _ _ _ _ _ _ _ he => he
+  fun _ _ _ _ _ _ _ hne hN h1 he => (MspecV_stable hne hN h1).symm.trans he
 
 /-- Commute a lock-op / x-access `A1` (region `R1`, disjoint from `owned(u)`,
     guard on the lock) past a following local/test `A2`. -/
@@ -382,7 +451,7 @@ theorem cond1 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
     intro hlt hc
     rcases hc with h | h | h
     · exact t_ne_free t (hlt ▸ ((h σ' σ'').mp h2).1)
-    · exact hne (tid_cast_inj (hlt ▸ ((h σ' σ'').mp h2).1))
+    · exact hne (tid_cast_inj (hlt.symm.trans (rel_classified h hN)))
     · obtain ⟨g, _, _, hch⟩ := h
       exact hne (tid_cast_inj (hlt ▸ ((hch σ' σ'').mp h2).1))
   rcases le_R_cases hR with hA1 | hA1 | hA1 | hA1
@@ -449,8 +518,6 @@ theorem commute_lt_any {A1 A2 : Action} {t u : Tid} {σ σ' σ'' : Store}
   refine commute_seq F1 F2 (fun v hR1 hR2 => hRdisj v hR2 hR1) ?_ (hg1refire F2.conf hRdisj hg1σ) h2 h1
   rw [e1] at hg2σ'; exact (hgpres F1.conf σ).mp hg2σ'
 
-theorem free_ne_tid (u : Tid) : FREE ≠ (u : Value) := (t_ne_free u).symm
-
 /-! ### Condition (2): a left-mover commutes before a preceding non-mover.
 
 We case on `A1` (the non-mover): if it is confined to `owned(t)` it commutes with
@@ -463,7 +530,7 @@ theorem cond2 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
   -- A2 lock-contending (rel/xacc) reads `σ' l = u`.
   have hA2u : (IsRel A2 u ∨ IsXacc A2 u) → σ' LOCK = (u : Value) := by
     rintro (h | h)
-    · exact ((h σ' σ'').mp h2).1
+    · exact rel_classified h (le_trans hL (by decide))
     · obtain ⟨g, _, _, hch⟩ := h; exact ((hch σ' σ'').mp h2).1
   rcases le_N_cases hN with hA1 | hA1 | hA1 | hA1 | hA1
   · -- A1 = acquire: σ' l = t
@@ -475,15 +542,15 @@ theorem cond2 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
     · exact absurd ((hlt ▸ hA2u (.inr h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
     · exact commute_shared_lt (acq_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
         (fun g2 hg2 hg => by change g2 σ LOCK = FREE; rw [hg2]; exact hg) ((hA1 σ σ').mp h1).1 (.inr h) h1 h2
-  · -- A1 = release: σ' l = free
-    have hlf : σ' LOCK = FREE := by obtain ⟨_, e⟩ := (hA1 σ σ').mp h1; rw [e, upd_same]
+  · -- A1 = release: total, σ' l = free
+    have hlf : σ' LOCK = FREE := by rw [(hA1 σ σ').mp h1, upd_same]
     rcases le_L_cases hL with h | h | h | h
     · exact absurd ((hlf ▸ hA2u (.inl h)) : (FREE:Value) = (u:Value)) (free_ne_tid u)
     · exact commute_shared_lt (rel_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
-        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ((hA1 σ σ').mp h1).1 (.inl h) h1 h2
+        (fun _ _ h => h) trivial (.inl h) h1 h2
     · exact absurd ((hlf ▸ hA2u (.inr h)) : (FREE:Value) = (u:Value)) (free_ne_tid u)
     · exact commute_shared_lt (rel_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
-        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ((hA1 σ σ').mp h1).1 (.inr h) h1 h2
+        (fun _ _ h => h) trivial (.inr h) h1 h2
   · -- A1 = local: commutes with any A2 (⊑ L ⟹ ⊑ N)
     obtain ⟨g1, F1⟩ := local_fires hA1
     exact commute_lt_any hne F1 (fun _ _ h => h) (le_trans hL (by decide)) h1 h2
@@ -549,7 +616,7 @@ theorem cond4 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
     ∃ σ''', A2 u σ' σ''' ∧ A1 t σ'' σ''' := by
   have hA2u : (IsRel A2 u ∨ IsXacc A2 u) → σ LOCK = (u : Value) := by
     rintro (h | h)
-    · exact ((h σ σ'').mp h2).1
+    · exact rel_classified h (le_trans hL (by decide))
     · obtain ⟨g, _, _, hch⟩ := h; exact ((hch σ σ'').mp h2).1
   rcases le_N_cases hN with hA1 | hA1 | hA1 | hA1 | hA1
   · -- A1 = acquire: σ l = free
@@ -561,15 +628,15 @@ theorem cond4 {t u : Tid} {A1 A2 : Action} {σ σ' σ'' : Store}
     · exact absurd (hf ▸ hA2u (.inr h)) (free_ne_tid u)
     · exact commute_diam_shared_lt (acq_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
         (fun g2 hg2 hg => by change g2 σ LOCK = FREE; rw [hg2]; exact hg) hf (.inr h) h1 h2
-  · -- A1 = release: σ l = t
-    have ht : σ LOCK = (t : Value) := ((hA1 σ σ').mp h1).1
+  · -- A1 = release: total, mover ⟹ σ l = t
+    have ht : σ LOCK = (t : Value) := rel_classified hA1 hN
     rcases le_L_cases hL with h | h | h | h
     · exact absurd ((ht ▸ hA2u (.inl h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
     · exact commute_diam_shared_lt (rel_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
-        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ht (.inl h) h1 h2
+        (fun _ _ h => h) trivial (.inl h) h1 h2
     · exact absurd ((ht ▸ hA2u (.inr h)) : (t:Value) = (u:Value)) (fun e => hne (tid_cast_inj e))
     · exact commute_diam_shared_lt (rel_fires hA1) (fun v hv ho => not_owns_l u (hv ▸ ho))
-        (fun g2 hg2 hg => by change g2 σ LOCK = (t:Value); rw [hg2]; exact hg) ht (.inr h) h1 h2
+        (fun _ _ h => h) trivial (.inr h) h1 h2
   · -- A1 = local
     obtain ⟨g1, F1⟩ := local_fires hA1
     exact commute_diam_lt_any hne F1 (fun _ _ h => h) (le_trans hL (by decide)) h1 h2
@@ -615,27 +682,35 @@ theorem MspecV_lift_le {A : Action} {P : Pred2} {e : Effect} (h : ∀ t σ, Mspe
     MspecV.lift A P ⊑ e := by
   apply sSup_le; rintro e' ⟨t, σ, σ0, _, rfl⟩; exact h t σ
 
-/-- `acquire` on the lock. -/
+/-- `acquire` on the lock (guarded — an acquire may block; it is a right-mover, so
+    `M-action` needs no totality). -/
 def acquireL : Action := fun t σ σ' => σ LOCK = FREE ∧ σ' = upd σ LOCK (t : Value)
-/-- `release` on the lock (only while holding it). -/
-def releaseL : Action := fun t σ σ' => σ LOCK = (t : Value) ∧ σ' = upd σ LOCK FREE
+/-- `release` on the lock — **total and unconditional** (`l := free`), per the fix.
+    Its effect is store-dependent: a left-mover exactly while the lock is held. -/
+def releaseL : Action := fun _ σ σ' => σ' = upd σ LOCK FREE
 
 theorem MspecV_acquire (t : Tid) (σ : Store) : MspecV acquireL t σ = Effect.R := by
   have hacq : IsAcq acquireL t := fun _ _ => Iff.rfl
   unfold MspecV; rw [if_pos hacq]
-theorem MspecV_release (t : Tid) (σ : Store) : MspecV releaseL t σ = Effect.L := by
-  have hrel : IsRel releaseL t := fun _ _ => Iff.rfl
-  have hnacq : ¬ IsAcq releaseL t := by
-    intro h
-    have hfire : releaseL t (fun _ => (t : Value)) (upd (fun _ => (t : Value)) LOCK FREE) :=
-      ⟨rfl, rfl⟩
-    exact absurd ((h _ _).mp hfire).1 (t_ne_free t)
-  unfold MspecV; rw [if_neg hnacq, if_pos hrel]
+
+theorem isRel_releaseL (t : Tid) : IsRel releaseL t := fun _ _ => Iff.rfl
+
+/-- Release is a left-mover **exactly when the releaser holds the lock**. -/
+theorem MspecV_release_held (t : Tid) (σ : Store) (h : σ LOCK = (t : Value)) :
+    MspecV releaseL t σ = Effect.L := by
+  unfold MspecV
+  rw [if_neg (isRel_not_isAcq (isRel_releaseL t)), if_pos (isRel_releaseL t), if_pos h]
 
 theorem MspecV_acquire_le (P : Pred2) : MspecV.lift acquireL P ⊑ Effect.R :=
   MspecV_lift_le (fun t σ => by rw [MspecV_acquire t σ]; exact Effect.le_refl _)
-theorem MspecV_release_le (P : Pred2) : MspecV.lift releaseL P ⊑ Effect.L :=
-  MspecV_lift_le (fun t σ => by rw [MspecV_release t σ]; exact Effect.le_refl _)
+
+/-- Lift bound for release: `L` provided the precondition guarantees the lock is
+    held (`σ(l) = tid`) — the sync discipline threaded through the derivation. -/
+theorem MspecV_release_le (P : Pred2)
+    (hP : ∀ t σ σ0, P t σ0 σ → σ LOCK = (t : Value)) : MspecV.lift releaseL P ⊑ Effect.L := by
+  apply sSup_le
+  rintro e' ⟨t, σ, σ0, hPσ, rfl⟩
+  rw [MspecV_release_held t σ (hP t σ σ0 hPσ)]; exact Effect.le_refl _
 
 /-- A lock-protected `x`-access whose value reads only owned/`x` state is a
     lock-protected access (`IsXacc`), hence a **both-mover**.  This is the
@@ -668,29 +743,36 @@ def topP : Pred2 := fun _ _ _ => True
 /-- The empty declaration table. -/
 def emptyD : Decls := fun _ => none
 
-/-- Each thread: `yield; acquire; yield` — a lock acquisition bracketed by yields. -/
-def acqThread : Stmt := .seq .yield (.seq (.act acquireL) .yield)
+/-- Each thread: `yield; acquire; release; yield` — a full lock round-trip.  The
+    total release is a left-mover here because the precondition after the acquire
+    guarantees the lock is held (`σ(l) = tid`), discharging `MspecV_release_le`. -/
+def acqRelThread : Stmt := .seq .yield (.seq (.act acquireL) (.seq (.act releaseL) .yield))
 
-theorem acqThread_verifies :
-    Judg MspecV emptyD topP topP acqThread topP
-      (yieldP (compPA (yieldP topP topP) acquireL) topP) (Effect.Y ;; (Effect.R ;; Effect.Y)) :=
-  Judg.seq (Judg.yield (fun _ _ _ _ => trivial) rfl)
+theorem acqRelThread_verifies :
+    ∃ Q, Judg MspecV emptyD topP topP acqRelThread topP Q
+      (Effect.Y ;; (Effect.R ;; (Effect.L ;; Effect.Y))) := by
+  -- after `acquire`, the lock is held — the sync discipline the release relies on
+  have hP2 : ∀ t σ σ0, compPA (yieldP topP topP) acquireL t σ0 σ → σ LOCK = (t : Value) := by
+    rintro t σ σ0 ⟨σ', _, hacq⟩; rw [hacq.2]; exact upd_same _ _ _
+  exact ⟨_, Judg.seq (Judg.yield (fun _ _ _ _ => trivial) rfl)
     (Judg.seq (Judg.action (MspecV_acquire_le _) (fun h => absurd h (by decide)))
-      (Judg.yield (fun _ _ _ _ => trivial) rfl))
+      (Judg.seq (Judg.action (MspecV_release_le _ hP2) (fun _ t σ => ⟨upd σ LOCK FREE, rfl⟩))
+        (Judg.yield (fun _ _ _ _ => trivial) rfl)))⟩
 
-/-- **`⊢ Σ` with no validity assumption.**  The two-thread lock-acquiring state
-    verifies via `M-state`; the `Valid MspecV` premise is discharged by the proved
-    `MspecV_valid`, not assumed. -/
-theorem acq_state_valid :
-    StateValid MspecV emptyD ⟨[acqThread, acqThread], fun _ => FREE⟩ := by
+/-- **`⊢ Σ` with no validity assumption.**  A two-thread lock **acquire/release**
+    state verifies via `M-state`; the `Valid MspecV` premise is discharged by the
+    proved `MspecV_valid`, not assumed.  The total release is used at effect `L` —
+    exactly the fix. -/
+theorem acqRel_state_valid :
+    StateValid MspecV emptyD ⟨[acqRelThread, acqRelThread], fun _ => FREE⟩ := by
+  obtain ⟨Q, hJ⟩ := acqRelThread_verifies
   refine ⟨topP, topP, ?_, MspecV_valid, ?_, ?_, ?_⟩
   · intro f spec body hf; simp [emptyD] at hf
   · intro _ _; trivial
   · intro t s hs
-    have hsc : s = acqThread := by rcases t with _ | _ | t <;> simp_all
+    have hsc : s = acqRelThread := by rcases t with _ | _ | t <;> simp_all
     subst hsc
-    exact ⟨topP, _, _, acqThread_verifies, by decide, fun _ _ _ _ => trivial,
-      ⟨.seqL .hole _, rfl⟩, trivial⟩
+    exact ⟨topP, Q, _, hJ, by decide, fun _ _ _ _ => trivial, ⟨.seqL .hole _, rfl⟩, trivial⟩
   · intro _ _ _ _ _ _; trivial
 
 end ValidSpec
