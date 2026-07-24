@@ -19,8 +19,13 @@
   (the run length is a function of the name), and the shared `x`, `l` are owned by
   no one — so the sync discipline is: touch `x` only while holding the lock.
 
-  `Valid MspecV` is proved (conditions 1–4), and the two-thread counter state is
-  verified via `M-state` with *no* validity hypothesis (`state_valid`).
+  **`MspecV_valid : Valid MspecV`** is proved outright — all four validity
+  conditions of Definition "Validity", with *no* hypothesis — using only the
+  three standard axioms.  This is what lets a whole-state `⊢ Σ` (rule `M-state`)
+  be discharged without assuming the mover spec valid.  The disciplined program
+  actions are shown to classify as the paper's movers against this valid spec:
+  `MspecV_acquire_le` (`R`), `MspecV_release_le` (`L`), and `xWrite_isXacc` (a
+  lock-protected `x`-access is a both-mover — the sync discipline on `x`).
 -/
 import MoverLogic.Logic
 
@@ -597,6 +602,57 @@ theorem MspecV_valid : Valid MspecV where
   left := fun _ _ _ _ _ _ _ hne hN h1 hL h2 => cond2 hne hN h1 hL h2
   effect := cond3
   nonblock := fun _ _ _ _ _ _ _ hne hN h1 hL h2 => cond4 hne hN h1 hL h2
+
+/-! ### The disciplined program actions classify as the paper's movers
+
+Concrete evidence that `MspecV` gives the paper's mover annotations against a
+*valid* spec: the lock ops are right/left movers, and a lock-protected `x`-access
+whose value reads only owned/`x` state is a both-mover — the sync discipline
+made precise (`x` is a both-mover *because the action holds the lock*). -/
+
+/-- The store-independence of `MspecV` lifts a uniform pointwise bound. -/
+theorem MspecV_lift_le {A : Action} {P : Pred2} {e : Effect} (h : ∀ t σ, MspecV A t σ ⊑ e) :
+    MspecV.lift A P ⊑ e := by
+  apply sSup_le; rintro e' ⟨t, σ, σ0, _, rfl⟩; exact h t σ
+
+/-- `acquire` on the lock. -/
+def acquireL : Action := fun t σ σ' => σ LOCK = FREE ∧ σ' = upd σ LOCK (t : Value)
+/-- `release` on the lock (only while holding it). -/
+def releaseL : Action := fun t σ σ' => σ LOCK = (t : Value) ∧ σ' = upd σ LOCK FREE
+
+theorem MspecV_acquire (t : Tid) (σ : Store) : MspecV acquireL t σ = Effect.R := by
+  have hacq : IsAcq acquireL t := fun _ _ => Iff.rfl
+  unfold MspecV; rw [if_pos hacq]
+theorem MspecV_release (t : Tid) (σ : Store) : MspecV releaseL t σ = Effect.L := by
+  have hrel : IsRel releaseL t := fun _ _ => Iff.rfl
+  have hnacq : ¬ IsAcq releaseL t := by
+    intro h
+    have hfire : releaseL t (fun _ => (t : Value)) (upd (fun _ => (t : Value)) LOCK FREE) :=
+      ⟨rfl, rfl⟩
+    exact absurd ((h _ _).mp hfire).1 (t_ne_free t)
+  unfold MspecV; rw [if_neg hnacq, if_pos hrel]
+
+theorem MspecV_acquire_le (P : Pred2) : MspecV.lift acquireL P ⊑ Effect.R :=
+  MspecV_lift_le (fun t σ => by rw [MspecV_acquire t σ]; exact Effect.le_refl _)
+theorem MspecV_release_le (P : Pred2) : MspecV.lift releaseL P ⊑ Effect.L :=
+  MspecV_lift_le (fun t σ => by rw [MspecV_release t σ]; exact Effect.le_refl _)
+
+/-- A lock-protected `x`-access whose value reads only owned/`x` state is a
+    lock-protected access (`IsXacc`), hence a **both-mover**.  This is the
+    synchronization discipline on `x`, verified against the *valid* spec. -/
+def xWrite (f : Store → Value) : Action :=
+  fun t σ σ' => σ LOCK = (t : Value) ∧ σ' = upd σ XVAR (f σ)
+
+theorem xWrite_isXacc {f : Store → Value} {t : Tid}
+    (hf : ∀ σ1 σ2, (∀ v, (owns t v ∨ v = XVAR) → σ1 v = σ2 v) → f σ1 = f σ2) :
+    IsXacc (xWrite f) t := by
+  refine ⟨fun σ => upd σ XVAR (f σ), ⟨?_, ?_⟩, fun σ => upd_other σ XVAR (f σ) LOCK lock_ne_x,
+    fun _ _ => Iff.rfl⟩
+  · intro σ v hv; exact upd_other σ XVAR (f σ) v (fun he => hv (Or.inr he))
+  · intro σ1 σ2 hag v hv
+    rcases hv with hv | hv
+    · rw [upd_other _ _ _ _ (owns_ne_x hv), upd_other _ _ _ _ (owns_ne_x hv), hag v (Or.inl hv)]
+    · subst hv; rw [upd_same, upd_same, hf σ1 σ2 hag]
 
 end ValidSpec
 end MoverLogic
