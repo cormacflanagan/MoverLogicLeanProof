@@ -348,55 +348,51 @@ the soundness development otherwise takes as given.
 The design:
 
 - **Classification is by action *shape*** (acquire → `R`, a local write → `B`, a
-  lock-protected `x`-access → `B`, a test reading only owned state → `B`,
-  everything else → error `E`). Most shapes are classified **store-independently**,
-  which makes validity condition (3) — one thread's step cannot change another's
-  mover effect — immediate for them.
-- **Release is total and store-dependent** (a release unconditionally sets the lock
-  back to `FREE`; it is classified `L` exactly when the lock is currently held by
-  the releasing thread, `σ(l) = tid`, and `E` otherwise). Condition (3) still holds
-  because one thread's acquire/release cannot flip *another* thread's release
-  classification: the lock is either free or held by someone, and only the true
-  holder is ever at `L` (`MspecV_stable` / `rel_classified`). A total action at
-  effect `L` is exactly what `M-action`'s "left-mover terminates" side condition
-  demands — so release can be *used* in a state derivation, not merely classified.
+  test reading only owned state → `B`, everything else → error `E`). These shapes
+  are classified **store-independently**, which makes validity condition (3) — one
+  thread's step cannot change another's mover effect — immediate for them.
+- **The two lock-guarded shapes are total and store-dependent.** A *release*
+  unconditionally sets the lock to `FREE`; a lock-protected *`x`-write* (`x := f σ`)
+  fires unconditionally. Each is classified by reading *one* store cell, the lock:
+  a release is `L` exactly when `σ(l) = tid` (else `E`), and an `x`-write is `B`
+  exactly when `σ(l) = tid` (else `E` — an unsynchronized `x`-access). Condition (3)
+  still holds because one thread's step cannot flip *another* thread's lock
+  ownership: the lock is either free or held by someone, and only the true holder is
+  ever a mover (`MspecV_stable`, `rel_classified`, `xacc_classified`). Being *total*
+  at effect `L`/`B` is exactly what `M-action`'s "left-mover terminates" side
+  condition demands — so both can be *used* in a state derivation, not merely
+  classified.
 - **Ownership is by a leading-`'A'` run**: thread `t` owns the variables whose name
   begins with `t+1` copies of `'A'`. Because the run length is a *function* of the
   name, different threads own **disjoint** sets for free (`owns_disjoint`); `x` and
   the lock `l` are owned by no one.
-- **The sync discipline on `x`**: an `x`-access is a both-mover *because the action
-  itself holds the lock* (`IsXacc` / `xWrite_isXacc`); an unsynchronized `x`-access
-  is not one of the mover shapes, so it is `E` (an error the logic rejects). This is
-  exactly the paper's `int x both-mover if m == tid`, made enforceable.
+- **The sync discipline on `x`**: an `x`-write is a both-mover *because the lock is
+  held when it runs* (`IsXacc` / `MspecV_xWrite_held`); an unsynchronized `x`-write
+  is `E` (an error the logic rejects). This is exactly the paper's
+  `int x both-mover if m == tid`, made enforceable.
 
 Conditions (1), (2), (4) are discharged by a single commutation atom —
 **confined actions over disjoint regions commute** (`confined_comm`) — together
-with guard-conflict vacuity when two threads contend for the lock or `x` (the
-second contender is provably blocked). Against this valid spec the disciplined
-actions carry the paper's mover annotations: `MspecV_acquire_le` (`R`),
-`MspecV_release_le` (`L`), `xWrite_isXacc` (`B`).
+with classification-conflict vacuity when two threads contend for the lock or `x`
+(the two contenders would both have to hold the lock). Against this valid spec the
+disciplined actions carry the paper's mover annotations: `MspecV_acquire_le` (`R`),
+`MspecV_release_le` (`L`), `MspecV_xWrite_le` (`B`).
 
-**An unconditional `⊢ Σ`.** `acqRel_state_valid : StateValid MspecV emptyD Σ`
-verifies a two-thread state that each **acquires and then releases** the lock
-(`yield; acquire; release; yield`) via `M-state` **with no validity hypothesis** —
-the `Valid MspecV` premise is discharged by `MspecV_valid`, not assumed
-(`#print axioms acqRel_state_valid` = the three standard axioms). This is the
-payoff: a whole-state judgment that does not assume the mover spec valid, and that
-exercises the total store-dependent release at effect `L`.
+**Two unconditional `⊢ Σ`.** Both discharge the `Valid MspecV` premise with
+`MspecV_valid`, not an assumption (`#print axioms` = the three standard axioms):
 
-**What a faithful *client* `⊢ Σ` additionally needs.** Mechanizing this surfaced a
-real subtlety. Rule `M-action` requires a both/left-mover to be **total** (the
-"left-mover terminates" side condition). A lock *acquire* is a right-mover, so it
-needs no totality and may block. A *release* (`L`) and a lock-protected *`x`-write*
-(`B`) must instead be total, which forces their lock-guard out of the action and
-into the *spec*. Release now does exactly this: the action unconditionally frees
-the lock, and the *spec* is **store-dependent** (`L` when `σ(l) = tid`, else `E`).
-The same pattern remains to be applied to the *`x`-write* (`B` when `σ(l) = tid`,
-else `E`, with a total underlying write); re-proving validity already covers the
-store-dependent release, and porting the `add()`/`client()` derivations onto a
-total store-dependent `x`-write is the remaining work. The hard,
-previously-only-assumed part — that a concrete, sync-disciplined mover spec *is
-valid* — is done and machine-checked.
+- `acqRel_state_valid` verifies a two-thread lock round-trip
+  (`yield; acquire; release; yield`), exercising the total store-dependent release
+  at effect `L`.
+- `client_state_valid` verifies a **faithful critical section**: two threads each
+  running `yield; acquire; x := x+1; release; yield`. The total `x`-write is used at
+  effect `B` and the release at `L`, both both/left-movers *because the lock is
+  held* there — the paper's `add()`/`client()` counter, machine-checked against a
+  mover spec that is *proved valid*, with the sync discipline on `x` enforced.
+
+The hard, previously-only-assumed part — that a concrete, sync-disciplined mover
+spec *is valid*, and that a faithful lock-protected shared-counter state verifies
+against it — is done and machine-checked.
 
 ## Status
 

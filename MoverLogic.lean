@@ -18,7 +18,10 @@
                               initial state), against a concrete mover spec
     * `MoverLogic.ValidSpec` — a sync-disciplined mover spec proved *valid*
                               outright (`MspecV_valid : Valid MspecV`, no
-                              assumption)
+                              assumption), plus two unconditional whole-state
+                              judgments against it: a lock round-trip and a
+                              faithful `x++`-under-lock critical section
+                              (`acqRel_state_valid`, `client_state_valid`)
 -/
 import MoverLogic.Effects
 import MoverLogic.Language
