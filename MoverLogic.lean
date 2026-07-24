@@ -13,6 +13,9 @@
                             — the Reduction theorem's commutation layer:
                               state-level, then thread-indexed / trace-composable
     * `MoverLogic.PostCommit`— Post-Commit Termination (size metric + progress)
+    * `MoverLogic.Examples` — worked `Judg` derivations for the paper's examples
+                              (spin lock, the `add()`/`client()` counter, the
+                              initial state), against a concrete mover spec
 -/
 import MoverLogic.Effects
 import MoverLogic.Language
@@ -27,3 +30,4 @@ import MoverLogic.Reduction
 import MoverLogic.ReductionThm
 import MoverLogic.PostCommit
 import MoverLogic.Assembly
+import MoverLogic.Examples

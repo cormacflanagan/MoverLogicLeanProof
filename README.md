@@ -40,6 +40,7 @@ theorem** (`Reduction` → `ReductionThm` → `PostCommit` → `Assembly`).
 | `MoverLogic/Soundness.lean` | Thm "Soundness"      | Not-Wrong for standard states; Soundness-modulo-Preservation |
 | `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, `embed` (Reduction and the assembled Soundness are proved in `Assembly.lean`) |
 | `MoverLogic/Preservation.lean` | Thm thm:pres + Lemmas lem:yield-stable / lem:ctxt-switch / lem:pres-redex | The **complete Preservation proof**: Yield Stabilization, Context Switch, Preservation for Redexes (fused with the Evaluation Context rebuild), and **`preservation`** / `preservation_star` |
+| `MoverLogic/Examples.lean` | Figs. 3, 5, 7 (the examples) | **Worked `Judg` derivations for the paper's examples** against a concrete mover spec and concrete actions (spin lock, the `add()`/`client()` counter, the initial state); see "Worked example derivations" below |
 
 ## What is proved
 
@@ -287,9 +288,43 @@ Lean-model artifact, not a paper bug). `IStateValid` now carries the *anchor*
 conjunct `Pi.threads[a]? = none → σ₀ = Pi.store` — vacuous for genuine
 states and trivially supplied by `embed`.
 
+## Worked example derivations
+
+Where the modules above formalize the *logic* and its *soundness*, `Examples.lean`
+puts the logic to work: it exhibits, as concrete `Judg` terms, mover-logic
+**derivations for the paper's examples**, showing they satisfy the proof system.
+Everything is checked against a *single concrete mover specification* `Mspec` and
+*concrete actions*, so the derivations are self-contained — the mover claims of
+the paper's variable declarations (a lock acquire is a right-mover `R`, a release
+is a left-mover `L`, lock-protected/local accesses are both-movers `B`) are
+**derived from `Mspec`, not assumed**. The lock is modelled in one variable with
+a `free = -1` / `held = tid` encoding, which makes the classification total.
+
+| Result | Paper | What it shows |
+|--------|-------|---------------|
+| `spin_lock_loop` | Fig. 5, §8.1 | The paper's *own* worked derivation, verbatim: `while (!cas(l,0,tid)) skip` verifies with effect `(B;B)*;R = R`, side condition `¬(R ⊑ L)` ✓ |
+| `spin_lock_def` / `spin_unlock_def` | Fig. 5 | `spin_lock` / `spin_unlock` verify as atomic right- and left-movers (rule `M-def-atomic`) |
+| `add_body_atomic` | Fig. 7 | `add()`'s body is a single reducible sequence `R;B;B;B;B;L;B = N` (an `R*[N]L*`), so the function is **atomic** |
+| `add_meets_ensures` | Fig. 7 | `add()` meets the paper's exact spec `ensures x == \old(x)+arg ∧ result == x` (rule `M-def-atomic`) |
+| `client_body_verifies` / `client_def` | Fig. 7 | the **non-atomic** `client()`: effect `B;N;Y;B;N;B;B;Y = R`, two reducible sequences separated by yields, two `add()` calls via `M-call-atomic`, and `assert even(u)` whose `wrong` branch has an *empty precondition* (rejected by `M-wrong`), all under the disentangled invariant `even(x)` |
+| `init_state_valid` | Fig. 7 | `⊢ Σ` for the two-thread initial state `(yield; client()) ‖ (yield; client())` (rule `M-state`), given the paper's standing assumption that `M` is valid |
+
+Each result is machine-checked with only the three standard axioms (verify with
+`#print axioms client_body_verifies`, etc.). The `init_state_valid` theorem takes
+`Valid Mspec` as an explicit hypothesis: validity is the semantic side-condition
+the paper *assumes* about a mover specification (Definition "Validity"), checked
+separately for the concrete program actions — the simplified `Mspec` here
+classifies *arbitrary* actions by their lock behaviour, so it is not valid in that
+full generality, and the assumption is stated rather than proved, exactly as the
+paper assumes it.
+
 ## Status
 
 **Both hard theorems are fully proved**: Reduction (`reduction_proved`) and
 Preservation (`preservation`). The entire soundness chain is assembled, and
 `#print axioms soundness'` lists precisely Lean's standard
 `propext`/`Classical.choice`/`Quot.sound` — no custom axioms, no `sorry`.
+
+The paper's **examples** (spin lock, the `add()`/`client()` counter, the initial
+state) are given explicit machine-checked derivations in `Examples.lean` — see
+"Worked example derivations" above.
