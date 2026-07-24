@@ -654,5 +654,44 @@ theorem xWrite_isXacc {f : Store → Value} {t : Tid}
     · rw [upd_other _ _ _ _ (owns_ne_x hv), upd_other _ _ _ _ (owns_ne_x hv), hag v (Or.inl hv)]
     · subst hv; rw [upd_same, upd_same, hf σ1 σ2 hag]
 
+/-! ### An unconditional whole-state verification against the valid spec
+
+`M-action` requires a both/left-mover to be *total* (the "left-mover terminates"
+condition).  Acquire is a right-mover, so it needs no totality — a lock *acquire*
+may block.  We verify a two-thread state that acquires the lock, showing
+**`StateValid MspecV D Σ` outright — plugging in `MspecV_valid`, with no validity
+hypothesis** (a faithful `release`/`x`-write version needs the store-dependent
+variant of `MspecV` discussed in the README). -/
+
+/-- The always-true predicate, used as a trivial rely/guarantee here. -/
+def topP : Pred2 := fun _ _ _ => True
+/-- The empty declaration table. -/
+def emptyD : Decls := fun _ => none
+
+/-- Each thread: `yield; acquire; yield` — a lock acquisition bracketed by yields. -/
+def acqThread : Stmt := .seq .yield (.seq (.act acquireL) .yield)
+
+theorem acqThread_verifies :
+    Judg MspecV emptyD topP topP acqThread topP
+      (yieldP (compPA (yieldP topP topP) acquireL) topP) (Effect.Y ;; (Effect.R ;; Effect.Y)) :=
+  Judg.seq (Judg.yield (fun _ _ _ _ => trivial) rfl)
+    (Judg.seq (Judg.action (MspecV_acquire_le _) (fun h => absurd h (by decide)))
+      (Judg.yield (fun _ _ _ _ => trivial) rfl))
+
+/-- **`⊢ Σ` with no validity assumption.**  The two-thread lock-acquiring state
+    verifies via `M-state`; the `Valid MspecV` premise is discharged by the proved
+    `MspecV_valid`, not assumed. -/
+theorem acq_state_valid :
+    StateValid MspecV emptyD ⟨[acqThread, acqThread], fun _ => FREE⟩ := by
+  refine ⟨topP, topP, ?_, MspecV_valid, ?_, ?_, ?_⟩
+  · intro f spec body hf; simp [emptyD] at hf
+  · intro _ _; trivial
+  · intro t s hs
+    have hsc : s = acqThread := by rcases t with _ | _ | t <;> simp_all
+    subst hsc
+    exact ⟨topP, _, _, acqThread_verifies, by decide, fun _ _ _ _ => trivial,
+      ⟨.seqL .hole _, rfl⟩, trivial⟩
+  · intro _ _ _ _ _ _; trivial
+
 end ValidSpec
 end MoverLogic

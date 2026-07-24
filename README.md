@@ -368,11 +368,25 @@ second contender is provably blocked). Against this valid spec the disciplined
 actions carry the paper's mover annotations: `MspecV_acquire_le` (`R`),
 `MspecV_release_le` (`L`), `xWrite_isXacc` (`B`).
 
-What remains to make the *client* state's `⊢ Σ` unconditional is mechanical: port
-the `add()`/`client()` derivations of `Examples.lean` onto `MspecV`'s variable
-encoding (leading-`'A'` locals) and lock-guarded `x`-writes, then plug
-`MspecV_valid` into `M-state` in place of the hypothesis. The hard part — that a
-concrete, sync-disciplined mover spec *is valid* — is done.
+**An unconditional `⊢ Σ`.** `acq_state_valid : StateValid MspecV emptyD Σ`
+verifies a two-thread lock-acquiring state via `M-state` **with no validity
+hypothesis** — the `Valid MspecV` premise is discharged by `MspecV_valid`, not
+assumed (`#print axioms acq_state_valid` = the three standard axioms). This is the
+payoff: a whole-state judgment that does not assume the mover spec valid.
+
+**What a faithful *client* `⊢ Σ` additionally needs.** Mechanizing this surfaced a
+real subtlety. Rule `M-action` requires a both/left-mover to be **total** (the
+"left-mover terminates" side condition). A lock *acquire* is a right-mover, so it
+needs no totality and may block — hence `acq_state_valid` goes through. But a
+*release* (`L`) and a lock-protected *`x`-write* (`B`) must be total, which forces
+their lock-guard out of the action and into the *spec*: the faithful spec must be
+**store-dependent** for these (`x`-write is `B` when `σ(l) = tid`, else `E`), with
+a *total* underlying action. That store-dependent variant is still valid — one
+thread's acquire/release cannot flip another thread's `x`-classification (it stays
+`E` for non-holders), so condition (3) still holds — but re-proving validity for it
+and porting the `add()`/`client()` derivations onto it is the remaining work. The
+hard, previously-only-assumed part — that a concrete, sync-disciplined mover spec
+*is valid* — is done and machine-checked.
 
 ## Status
 
