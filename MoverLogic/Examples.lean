@@ -17,6 +17,11 @@
   lock-protected/local accesses are both-movers) are *derived* from `Mspec`,
   not assumed.
 
+  Thread-local variables are modelled faithfully: `r`, `arg`, `result`, `u` are
+  the paper's `r_tid`, resolved to `loc "r" t` for the acting thread `t`, so one
+  shared `add`/`client` body serves every thread and different threads touch
+  disjoint locals.  Only the counter `x` and the lock `l` are shared.
+
   The headline results (all with `#print axioms` = the three standard axioms):
 
     * `spin_lock_loop`   — the paper's own worked derivation `e = (B;B)*;R = R`
@@ -67,6 +72,41 @@ theorem upd_other (σ : Store) (x : Var) (v : Value) (z : Var) (h : z ≠ x) :
     upd σ x v z = σ z := by
   unfold upd; simp [h]
 
+/-! ### Thread-local variable names
+
+A thread-local variable `r_tid` (paper: "each thread accesses a separate variable
+`r_tid`") is modelled as the name `r` tagged with the acting thread.  The tag is a
+`(t+1)`-character unary marker, so the encoding is injective in a way we can prove
+without wrestling `Nat.repr`: names differ from the one-character globals `x`, `l`
+by *length*, and two locals with different base names differ after cancelling the
+shared tag.  These are the only string facts the derivations need. -/
+
+/-- A `(t+1)`-character tag, distinguishing thread `t`'s locals. -/
+def tag : Nat → String
+  | 0 => "a"
+  | n + 1 => "a" ++ tag n
+
+theorem tag_length (t : Nat) : (tag t).length = t + 1 := by
+  induction t with
+  | zero => decide
+  | succ n ih => rw [tag, String.length_append, ih]; have : "a".length = 1 := rfl; omega
+
+/-- `loc name t` — thread `t`'s copy of the local variable `name`. -/
+def loc (name : Var) (t : Tid) : Var := name ++ tag t
+
+/-- A thread-local variable is never a one-character global (length ≥ 2 > 1). -/
+theorem loc_ne_global {name : Var} (hn : 1 ≤ name.length) {g : Var}
+    (hg : g.length = 1) (t : Tid) : loc name t ≠ g := by
+  intro h; have hl := congrArg String.length h
+  rw [loc, String.length_append, tag_length, hg] at hl; omega
+
+/-- Different base names give different thread-local variables (same thread). -/
+theorem loc_ne_loc {a b : Var} (h : a ≠ b) (t : Tid) : loc a t ≠ loc b t := by
+  intro he; apply h
+  have hd := congrArg String.toList he
+  rw [loc, loc, String.toList_append, String.toList_append] at hd
+  exact String.toList_inj.mp (List.append_cancel_right hd)
+
 /-- `acquire(l)` — succeeds only from a free lock, setting it to the acting
     thread (paper: `⟨\old(l)=0 ∧ l=tid⟩l`). -/
 def acquireL : Action := fun t σ σ' => σ LOCK = FREE ∧ σ' = upd σ LOCK (t : Value)
@@ -74,11 +114,13 @@ def acquireL : Action := fun t σ σ' => σ LOCK = FREE ∧ σ' = upd σ LOCK (t
 /-- `release(l)` — sets the lock back to free (paper: `⟨l=0⟩l`). -/
 def releaseL : Action := fun _ σ σ' => σ' = upd σ LOCK FREE
 
-/-- An assignment `dst := f(σ)` computing a new value from the current store
-    (models `r = x`, `r = r + arg`, `x = 1`, `x = r`, `result = r`, `arg = 2`,
-    `u = result`, …).  `dst` is a non-lock variable, so it is a
-    lock-protected/local both-mover. -/
-def write (dst : Var) (f : Store → Value) : Action := fun _ σ σ' => σ' = upd σ dst (f σ)
+/-- A thread-aware assignment `d(t) := f(t, σ)` — writes the variable `d t`
+    (a global like `x`, or a thread-local like `loc "r" t`) with a value that may
+    read the acting thread's own variables.  Models `r_t = x`, `r_t = r_t + arg_t`,
+    `x = 1`, `x = r_t`, `result_t = r_t`, `arg_t = 2`, `u_t = result_t`, ….  As
+    long as `d t` is not the lock, it is a lock-protected/local both-mover. -/
+def gen (d : Tid → Var) (f : Tid → Store → Value) : Action :=
+  fun t σ σ' => σ' = upd σ (d t) (f t σ)
 
 /-! ### The concrete mover specification
 
@@ -175,28 +217,28 @@ theorem Mspec_idAction_all (t : Tid) (σ : Store) : Mspec idAction t σ ⊑ Effe
 theorem Mspec_idAction_le (P : Pred2) : Mspec.lift idAction P ⊑ Effect.B :=
   lift_le_of_all (Mspec_idAction_all)
 
-/-- A general non-lock assignment is a both-mover. -/
-theorem Mspec_write_all (dst : Var) (f : Store → Value) (hx : dst ≠ LOCK)
-    (t : Tid) (σ : Store) : Mspec (write dst f) t σ ⊑ Effect.B := by
+/-- A thread-aware non-lock assignment is a both-mover. -/
+theorem Mspec_gen_all {d : Tid → Var} {f : Tid → Store → Value} (hd : ∀ t, d t ≠ LOCK)
+    (t : Tid) (σ : Store) : Mspec (gen d f) t σ ⊑ Effect.B := by
   unfold Mspec
-  by_cases h1 : σ LOCK = FREE ∧ write dst f t σ (upd σ LOCK (t : Value))
+  by_cases h1 : σ LOCK = FREE ∧ gen d f t σ (upd σ LOCK (t : Value))
   · exfalso
     have := congrFun h1.2 LOCK
-    rw [upd_same, upd_other σ dst (f σ) LOCK (Ne.symm hx)] at this
+    rw [upd_same, upd_other σ (d t) (f t σ) LOCK (Ne.symm (hd t))] at this
     rw [h1.1] at this
     exact free_ne_tid t this.symm
   · rw [if_neg h1]
-    by_cases h2 : σ LOCK = (t : Value) ∧ write dst f t σ (upd σ LOCK FREE)
+    by_cases h2 : σ LOCK = (t : Value) ∧ gen d f t σ (upd σ LOCK FREE)
     · exfalso
       have := congrFun h2.2 LOCK
-      rw [upd_same, upd_other σ dst (f σ) LOCK (Ne.symm hx)] at this
+      rw [upd_same, upd_other σ (d t) (f t σ) LOCK (Ne.symm (hd t))] at this
       rw [h2.1] at this
       exact free_ne_tid t this
     · rw [if_neg h2]; decide
 
-theorem Mspec_write_le (dst : Var) (f : Store → Value) (hx : dst ≠ LOCK) (P : Pred2) :
-    Mspec.lift (write dst f) P ⊑ Effect.B :=
-  lift_le_of_all (Mspec_write_all dst f hx)
+theorem Mspec_gen_le {d : Tid → Var} {f : Tid → Store → Value} (hd : ∀ t, d t ≠ LOCK)
+    (P : Pred2) : Mspec.lift (gen d f) P ⊑ Effect.B :=
+  lift_le_of_all (Mspec_gen_all hd)
 
 /-- `P; I = P`: sequencing with the identity action is a no-op on preconditions.
     (`idAction` is `fun _ σ σ' => σ = σ'`.) -/
@@ -284,11 +326,11 @@ theorem judg_release (D : Decls) (R G P : Pred2) :
     Judg Mspec D R G (.act releaseL) P (compPA P releaseL) Effect.L :=
   Judg.action (Mspec_release_le P) (fun _ _ σ => ⟨upd σ LOCK FREE, rfl⟩)
 
-/-- A non-lock assignment is a both-mover, and is total. -/
-theorem judg_write (D : Decls) (R G P : Pred2) (dst : Var) (f : Store → Value)
-    (hx : dst ≠ LOCK) :
-    Judg Mspec D R G (.act (write dst f)) P (compPA P (write dst f)) Effect.B :=
-  Judg.action (Mspec_write_le dst f hx P) (fun _ _ σ => ⟨upd σ dst (f σ), rfl⟩)
+/-- A thread-aware non-lock assignment is a both-mover, and is total. -/
+theorem judg_gen (D : Decls) (R G P : Pred2) (d : Tid → Var) (f : Tid → Store → Value)
+    (hd : ∀ t, d t ≠ LOCK) :
+    Judg Mspec D R G (.act (gen d f)) P (compPA P (gen d f)) Effect.B :=
+  Judg.action (Mspec_gen_le hd P) (fun _ t σ => ⟨upd σ (d t) (f t σ), rfl⟩)
 
 /-! ## Example 2 — the atomic `add()` counter body (Figure 7)
 
@@ -309,97 +351,109 @@ The left margin effects compose to `R;B;B;B;B;L;B = N`: a **single reducible
 sequence** `R*[N]L*`.  That is what makes `add()` atomic.  We build the body as
 a nested `M-seq` of `M-action`s and check the composite effect is `N ≠ E`. -/
 
-/-- The body of `add()` (variables `x`, `r`, `arg`, `result`; lock `l`). -/
+/-! `r`, `arg`, `result` are **thread-local** (`loc "r" t` = the paper's `r_tid`),
+so one shared `add` body works for every thread; `x` is the shared counter. -/
+
+/-- `d t ≠ l` for `d ∈ {loc "r", loc "arg", loc "result", const "x"}` — the
+    variables `add`/`client` write are never the lock. -/
+theorem locR_ne_lock : ∀ t, loc "r" t ≠ LOCK := fun t => loc_ne_global (by decide) (by decide) t
+theorem locArg_ne_lock : ∀ t, loc "arg" t ≠ LOCK := fun t => loc_ne_global (by decide) (by decide) t
+theorem locRes_ne_lock : ∀ t, loc "result" t ≠ LOCK := fun t => loc_ne_global (by decide) (by decide) t
+theorem locU_ne_lock : ∀ t, loc "u" t ≠ LOCK := fun t => loc_ne_global (by decide) (by decide) t
+theorem x_ne_L : ("x" : Var) ≠ LOCK := by decide
+theorem x_ne_lock : ∀ t : Tid, (fun _ : Tid => ("x" : Var)) t ≠ LOCK := fun _ => x_ne_L
+
+/-- Thread-locals are distinct from the shared counter `x`. -/
+theorem locArg_ne_x (t : Tid) : loc "arg" t ≠ "x" := loc_ne_global (by decide) (by decide) t
+theorem locRes_ne_x (t : Tid) : loc "result" t ≠ "x" := loc_ne_global (by decide) (by decide) t
+theorem locU_ne_x (t : Tid) : loc "u" t ≠ "x" := loc_ne_global (by decide) (by decide) t
+
+/-- The body of `add()`, with thread-local `r`, `arg`, `result` and shared `x`. -/
 def addBody : Stmt :=
   .seq (.act acquireL)
-   (.seq (.act (write "r" (fun σ => σ "x")))
-    (.seq (.act (write "r" (fun σ => σ "r" + σ "arg")))
-     (.seq (.act (write "x" (fun _ => 1)))
-      (.seq (.act (write "x" (fun σ => σ "r")))
+   (.seq (.act (gen (loc "r") (fun _ σ => σ "x")))
+    (.seq (.act (gen (loc "r") (fun t σ => σ (loc "r" t) + σ (loc "arg" t))))
+     (.seq (.act (gen (fun _ => "x") (fun _ _ => 1)))
+      (.seq (.act (gen (fun _ => "x") (fun t σ => σ (loc "r" t))))
        (.seq (.act releaseL)
-             (.act (write "result" (fun σ => σ "r"))))))))
+             (.act (gen (loc "result") (fun t σ => σ (loc "r" t)))))))))
 
 /-- **`add()`'s body is atomic**: from any precondition `P` it verifies with the
     single-reducible-sequence effect `N` (`= R;B;B;B;B;L;B`), so the whole
-    function may be treated as one atomic step.  `Q` is its exact
-    (strongest) postcondition, the composition of the seven actions. -/
+    function may be treated as one atomic step. -/
 theorem add_body_atomic (D : Decls) (R G P : Pred2) :
-    ∃ Q, Judg Mspec D R G addBody P Q Effect.N := by
-  have hne : ("x" : Var) ≠ LOCK := by decide
-  have hnr : ("r" : Var) ≠ LOCK := by decide
-  have hnres : ("result" : Var) ≠ LOCK := by decide
-  -- R ; (B ; (B ; (B ; (B ; (L ; B)))))  =  N
-  exact ⟨_, Judg.seq (judg_acquire D R G P)
-    (Judg.seq (judg_write D R G _ "r" _ hnr)
-     (Judg.seq (judg_write D R G _ "r" _ hnr)
-      (Judg.seq (judg_write D R G _ "x" _ hne)
-       (Judg.seq (judg_write D R G _ "x" _ hne)
+    ∃ Q, Judg Mspec D R G addBody P Q Effect.N :=
+  ⟨_, Judg.seq (judg_acquire D R G P)
+    (Judg.seq (judg_gen D R G _ (loc "r") _ locR_ne_lock)
+     (Judg.seq (judg_gen D R G _ (loc "r") _ locR_ne_lock)
+      (Judg.seq (judg_gen D R G _ (fun _ => "x") _ x_ne_lock)
+       (Judg.seq (judg_gen D R G _ (fun _ => "x") _ x_ne_lock)
         (Judg.seq (judg_release D R G _)
-                  (judg_write D R G _ "result" _ hnres))))))⟩
+                  (judg_gen D R G _ (loc "result") _ locRes_ne_lock))))))⟩
 
-/-- **`add()` verifies as an atomic function** (rule `M-def-atomic`), with the
-    elided effect `N`, from the trivial precondition. -/
+/-- **`add()` verifies as an atomic function** (rule `M-def-atomic`). -/
 theorem add_def (D : Decls) :
-    ∃ Q, FnValid Mspec D (.atomic Effect.N (fun _ _ => True) Q) addBody := by
-  obtain ⟨Q, hQ⟩ := add_body_atomic D botP botP (two (fun _ _ => True))
-  exact ⟨Q, hQ⟩
+    ∃ Q, FnValid Mspec D (.atomic Effect.N (fun _ _ => True) Q) addBody :=
+  add_body_atomic D botP botP (two (fun _ _ => True))
 
-/-! ### `add()`'s precise postcondition (the paper's `ensures`)
+/-! ### `add()`'s precise postcondition (the paper's `ensures`) -/
 
-We now pin `add()`'s postcondition to the paper's `x == \old(x) + arg` and
-`result == x`, so that `client()` can call `add()` through this spec.  The
-strongest postcondition of the body (the nested `M-seq` composition) implies it;
-that implication is the ordinary Hoare-logic content, discharged by unfolding
-the seven assignments. -/
-
-/-- The strongest postcondition produced by `add()`'s body (the composition of
-    its seven actions), from precondition `P`. -/
+/-- The strongest postcondition produced by `add()`'s body, from precondition `P`. -/
 def addPost (P : Pred2) : Pred2 :=
   compPA (compPA (compPA (compPA (compPA (compPA
     (compPA P acquireL)
-    (write "r" (fun σ => σ "x")))
-    (write "r" (fun σ => σ "r" + σ "arg")))
-    (write "x" (fun _ => 1)))
-    (write "x" (fun σ => σ "r")))
+    (gen (loc "r") (fun _ σ => σ "x")))
+    (gen (loc "r") (fun t σ => σ (loc "r" t) + σ (loc "arg" t))))
+    (gen (fun _ => "x") (fun _ _ => 1)))
+    (gen (fun _ => "x") (fun t σ => σ (loc "r" t))))
     releaseL)
-    (write "result" (fun σ => σ "r"))
+    (gen (loc "result") (fun t σ => σ (loc "r" t)))
 
 /-- `add()`'s body verifies with its strongest postcondition `addPost P`. -/
 theorem add_body_post (D : Decls) (R G P : Pred2) :
-    Judg Mspec D R G addBody P (addPost P) Effect.N := by
-  have hne : ("x" : Var) ≠ LOCK := by decide
-  have hnr : ("r" : Var) ≠ LOCK := by decide
-  have hnres : ("result" : Var) ≠ LOCK := by decide
-  exact Judg.seq (judg_acquire D R G P)
-    (Judg.seq (judg_write D R G _ "r" _ hnr)
-     (Judg.seq (judg_write D R G _ "r" _ hnr)
-      (Judg.seq (judg_write D R G _ "x" _ hne)
-       (Judg.seq (judg_write D R G _ "x" _ hne)
+    Judg Mspec D R G addBody P (addPost P) Effect.N :=
+  Judg.seq (judg_acquire D R G P)
+    (Judg.seq (judg_gen D R G _ (loc "r") _ locR_ne_lock)
+     (Judg.seq (judg_gen D R G _ (loc "r") _ locR_ne_lock)
+      (Judg.seq (judg_gen D R G _ (fun _ => "x") _ x_ne_lock)
+       (Judg.seq (judg_gen D R G _ (fun _ => "x") _ x_ne_lock)
         (Judg.seq (judg_release D R G _)
-                  (judg_write D R G _ "result" _ hnres))))))
+                  (judg_gen D R G _ (loc "result") _ locRes_ne_lock))))))
 
-/-- The paper's `add()` postcondition, as a two-store relation from the entry
-    store `σ` to the exit store `σ'`: `x == \old(x) + arg ∧ result == x`. -/
-def addEnsures : Pred2 := fun _ σ σ' => σ' "x" = σ "x" + σ "arg" ∧ σ' "result" = σ' "x"
+/-- The paper's `add()` postcondition, thread-local: from entry `σ` to exit `σ'`,
+    `x == \old(x) + arg_tid ∧ result_tid == x`. -/
+def addEnsures : Pred2 :=
+  fun t σ σ' => σ' "x" = σ "x" + σ (loc "arg" t) ∧ σ' (loc "result" t) = σ' "x"
 
+set_option linter.unusedSimpArgs false in
 /-- The strongest postcondition entails the paper's `ensures` (from the diagonal
     precondition `two S`).  This is the arithmetic of `r=x; r=r+arg; x=1; x=r;
-    result=r`, which lands `x' = x + arg` and `result = x'`. -/
+    result=r` on thread `t`'s own `r`, `arg`, `result`.  (The final `simp` is
+    given the full pairwise-distinctness set so it can peel every `upd`; not all
+    of it fires on both conjuncts, hence the linter is silenced.) -/
 theorem addPost_imp_ensures (S : Pred1) :
     addPost (two S) ⟹ addEnsures := by
   rintro t σ σ' hpost
-  -- unfold the seven-fold composition down to the raw stores
   obtain ⟨s6, ⟨s5, ⟨s4, ⟨s3, ⟨s2, ⟨s1, ⟨s0, hP, hacq⟩, hw1⟩, hw2⟩, hw3⟩, hw4⟩, hrel⟩, hw5⟩ := hpost
   obtain ⟨hs0eq, _⟩ := hP
-  subst s0                       -- diagonal precondition: s0 = σ
-  have e1 := hacq.2              -- s1 = σ[l := t]
-  subst s1                       -- via e1
-  subst s2 s3 s4 s5 s6 σ'        -- via hw1..hw5, hrel (each `s = upd …`)
-  -- goals are now concrete store lookups; `simp [upd]` reduces the string tests
-  refine ⟨?_, ?_⟩ <;> simp [upd, LOCK]
+  subst s0
+  have e1 := hacq.2
+  subst s1
+  subst s2 s3 s4 s5 s6 σ'
+  -- distinctness of the variables touched (thread `t`'s locals vs `x` vs the lock)
+  have a2 : loc "r" t ≠ "x" := loc_ne_global (by decide) (by decide) t
+  have a3 : loc "arg" t ≠ loc "r" t := loc_ne_loc (by decide) t
+  have a4 : loc "arg" t ≠ "x" := loc_ne_global (by decide) (by decide) t
+  have a6 : loc "result" t ≠ "x" := loc_ne_global (by decide) (by decide) t
+  have a8 : loc "result" t ≠ loc "r" t := loc_ne_loc (by decide) t
+  refine ⟨?_, ?_⟩ <;>
+    simp [gen, upd, x_ne_L, x_ne_L.symm,
+      locR_ne_lock t, (locR_ne_lock t).symm, locArg_ne_lock t, (locArg_ne_lock t).symm,
+      locRes_ne_lock t, (locRes_ne_lock t).symm,
+      a2, a2.symm, a3, a3.symm, a4, a4.symm, a6, a6.symm, a8, a8.symm]
 
 /-- **`add()` verifies against the paper's exact specification**
-    (`atomic ensures x == \old(x) + arg ∧ result == x`), rule `M-def-atomic`. -/
+    (`atomic ensures x == \old(x) + arg_tid ∧ result_tid == x`), rule `M-def-atomic`. -/
 theorem add_meets_ensures (D : Decls) :
     FnValid Mspec D (.atomic Effect.N (fun _ _ => True) addEnsures) addBody :=
   Judg.conseq (fun _ _ _ h => h) (addPost_imp_ensures _) (fun _ _ _ h => h)
@@ -430,12 +484,16 @@ exactly how rule `M-wrong` rejects reachable errors.
 
 The declaration table binds `add` to its verified atomic spec. -/
 
-/-- `even(x)` as a store predicate. -/
+/-- `even(x)` as a store predicate (`x` is the shared counter). -/
 def evenx (σ : Store) : Prop := ∃ k : Int, σ "x" = 2 * k
 
-/-- A program-point assertion about the *current* store, as a two-store predicate
-    (ignoring `\old`). -/
-def now (φ : Store → Prop) : Pred2 := fun _ _ σ => φ σ
+/-- A program-point assertion about the *current* store and acting thread, as a
+    two-store predicate (ignoring `\old`).  Thread-indexed so it can mention the
+    acting thread's own locals (`loc "u" t`, …). -/
+def now (φ : Tid → Store → Prop) : Pred2 := fun t _ σ => φ t σ
+
+/-- The `even(x)` invariant as a thread-indexed point predicate. -/
+def ex : Tid → Store → Prop := fun _ σ => evenx σ
 
 /-- The client's rely/guarantee: an interference step preserves `even(x)`
     (the paper's `relies even(x)` / `guarantees even(x)`). -/
@@ -478,23 +536,23 @@ theorem Mspec_stpres_le {A : Action} (hA : ∀ t σ σ', A t σ σ' → σ' = σ
     Mspec.lift A P ⊑ Effect.B :=
   lift_le_of_all (Mspec_stpres_all hA)
 
-/-- `even(u)` as a store predicate (`u` holds the client's `result`). -/
-def evenu (σ : Store) : Prop := ∃ k : Int, σ "u" = 2 * k
+/-- `even(u_tid)` as a thread-indexed store predicate (`u` is thread-local). -/
+def evenu (t : Tid) (σ : Store) : Prop := ∃ k : Int, σ (loc "u" t) = 2 * k
 
-/-- `even(u)` as a conditional action: the true branch tests `even(u)` (store
-    unchanged), the false branch tests `¬even(u)`.  This encodes `assert even(u)
+/-- `even(u)` as a conditional action: the true branch tests `even(u_tid)` (store
+    unchanged), the false branch tests `¬even(u_tid)`.  Encodes `assert even(u)
     = if even(u) skip else wrong`. -/
 def evenCond : CondAction :=
-  ⟨fun _ σ σ' => σ' = σ ∧ evenu σ, fun _ σ σ' => σ' = σ ∧ ¬ evenu σ⟩
+  ⟨fun t σ σ' => σ' = σ ∧ evenu t σ, fun t σ σ' => σ' = σ ∧ ¬ evenu t σ⟩
 
-/-- The body of `client()`. -/
+/-- The body of `client()`, with thread-local `arg`, `u`, `result` and shared `x`. -/
 def clientBody : Stmt :=
-  .seq (.act (write "arg" (fun _ => 2)))
+  .seq (.act (gen (loc "arg") (fun _ _ => 2)))
    (.seq (.call "add")
     (.seq .yield
-     (.seq (.act (write "arg" (fun _ => 2)))
+     (.seq (.act (gen (loc "arg") (fun _ _ => 2)))
       (.seq (.call "add")
-       (.seq (.act (write "u" (fun σ => σ "result")))
+       (.seq (.act (gen (loc "u") (fun t σ => σ (loc "result" t))))
         (.seq (.ite evenCond .skip .wrong)
               .yield))))))
 
@@ -507,51 +565,49 @@ private abbrev Gc : Pred2 := evenRely
 private abbrev Sx : Pred1 := fun _ σ => evenx σ
 
 /-- `now(even x)` (an even post-store) entails `evenRely` (even is preserved). -/
-theorem now_evenx_imp_evenRely : now evenx ⟹ evenRely := fun _ _ _ h _ => h
+theorem now_ex_imp_evenRely : now ex ⟹ evenRely := fun _ _ _ h _ => h
 
-/-- Program-point predicate after `arg = 2`: `even(x) ∧ arg = 2`. -/
-private def φarg : Store → Prop := fun σ => evenx σ ∧ σ "arg" = 2
-/-- Program-point predicate after the second `add()`: `even(x) ∧ even(result)`. -/
-private def φres : Store → Prop := fun σ => evenx σ ∧ ∃ k : Int, σ "result" = 2 * k
-/-- Program-point predicate after `u = result`: `even(x) ∧ even(u)`. -/
-private def φu : Store → Prop := fun σ => evenx σ ∧ evenu σ
+/-- Program-point predicate after `arg = 2`: `even(x) ∧ arg_tid = 2`. -/
+private def φarg : Tid → Store → Prop := fun t σ => evenx σ ∧ σ (loc "arg" t) = 2
+/-- Predicate after the second `add()`: `even(x) ∧ even(result_tid)`. -/
+private def φres : Tid → Store → Prop := fun t σ => evenx σ ∧ ∃ k : Int, σ (loc "result" t) = 2 * k
+/-- Predicate after `u = result`: `even(x) ∧ even(u_tid)`. -/
+private def φu : Tid → Store → Prop := fun t σ => evenx σ ∧ evenu t σ
 
 /-- **`client()`'s body verifies** with effect `R` (`= B;N;Y;B;N;B;B;Y`), from
     precondition `even(x)` to postcondition `even(x)`, under a rely/guarantee that
-    preserve `even(x)`.  The two `add()` calls go through the atomic spec; the
-    two yields separate the two reducible sequences; and the `wrong` branch of
-    the assertion has an empty (unsatisfiable) precondition, so it is rejected. -/
+    preserve `even(x)`.  Each thread uses its own `arg_tid`, `u_tid`, `result_tid`;
+    the two `add()` calls go through the atomic spec; the two yields separate the
+    two reducible sequences; and the `wrong` branch of the assertion has an empty
+    (unsatisfiable) precondition, so it is rejected. -/
 theorem client_body_verifies :
     Judg Mspec Dtable Rc Gc clientBody (two Sx) (two Sx) Effect.R := by
-  have hax : ("arg" : Var) ≠ LOCK := by decide
   -- `arg = 2`  (B):   two(even x)  →  now(even x ∧ arg = 2)
-  have J1 : Judg Mspec Dtable Rc Gc (.act (write "arg" (fun _ => 2)))
+  have J1 : Judg Mspec Dtable Rc Gc (.act (gen (loc "arg") (fun _ _ => 2)))
       (two Sx) (now φarg) Effect.B := by
     refine Judg.conseq (fun _ _ _ h => h) ?_ (fun _ _ _ h => h) (fun _ _ _ h => h)
-      (by decide) (judg_write Dtable Rc Gc (two Sx) "arg" (fun _ => 2) hax)
+      (by decide) (judg_gen Dtable Rc Gc (two Sx) (loc "arg") (fun _ _ => 2) locArg_ne_lock)
     rintro t σ0 σ'' ⟨σ', ⟨rfl, ⟨k, hk⟩⟩, rfl⟩
-    exact ⟨⟨k, by rw [upd_other _ _ _ _ (by decide : ("x":Var) ≠ "arg")]; exact hk⟩,
-           upd_same _ _ _⟩
-  -- `add()`   (N):   now(even x ∧ arg = 2)  →  now(even x)   [x := x + 2]
-  have J2 : Judg Mspec Dtable Rc Gc (.call "add") (now φarg) (now evenx) Effect.N := by
+    exact ⟨⟨k, by simp [upd, (locArg_ne_x t).symm]; exact hk⟩, by simp [upd]⟩
+  -- `add()`   (N):   now(even x ∧ arg = 2)  →  now(even x)   [x := x + arg]
+  have J2 : Judg Mspec Dtable Rc Gc (.call "add") (now φarg) (now ex) Effect.N := by
     refine Judg.conseq (fun _ _ _ h => h) ?_ (fun _ _ _ h => h) (fun _ _ _ h => h)
       (by decide) (Judg.callAtomic (P := now φarg) Dtable_add (fun _ _ _ => trivial))
     rintro t σ0 σ'' ⟨σ', ⟨⟨k, hk⟩, harg⟩, hx, _⟩
     exact ⟨k + 1, by rw [hx, hk, harg, Int.mul_add, Int.mul_one]⟩
   -- `yield`   (Y):   now(even x)  →  now(even x)   [even x is stable under R*]
-  have J3 : Judg Mspec Dtable Rc Gc .yield (now evenx) (now evenx) Effect.Y := by
+  have J3 : Judg Mspec Dtable Rc Gc .yield (now ex) (now ex) Effect.Y := by
     refine Judg.conseq (fun _ _ _ h => h) ?_ (fun _ _ _ h => h) (fun _ _ _ h => h)
-      (by decide) (Judg.yield (P := now evenx) now_evenx_imp_evenRely rfl)
+      (by decide) (Judg.yield (P := now ex) now_ex_imp_evenRely rfl)
     rintro t a b ⟨rfl, _σ0, σ, hev, hrtc⟩
     exact evenx_stable hrtc hev
   -- `arg = 2` (B):   now(even x)  →  now(even x ∧ arg = 2)
-  have J4 : Judg Mspec Dtable Rc Gc (.act (write "arg" (fun _ => 2)))
-      (now evenx) (now φarg) Effect.B := by
+  have J4 : Judg Mspec Dtable Rc Gc (.act (gen (loc "arg") (fun _ _ => 2)))
+      (now ex) (now φarg) Effect.B := by
     refine Judg.conseq (fun _ _ _ h => h) ?_ (fun _ _ _ h => h) (fun _ _ _ h => h)
-      (by decide) (judg_write Dtable Rc Gc (now evenx) "arg" (fun _ => 2) hax)
+      (by decide) (judg_gen Dtable Rc Gc (now ex) (loc "arg") (fun _ _ => 2) locArg_ne_lock)
     rintro t σ0 σ'' ⟨σ', ⟨k, hk⟩, rfl⟩
-    exact ⟨⟨k, by rw [upd_other _ _ _ _ (by decide : ("x":Var) ≠ "arg")]; exact hk⟩,
-           upd_same _ _ _⟩
+    exact ⟨⟨k, by simp [upd, (locArg_ne_x t).symm]; exact hk⟩, by simp [upd]⟩
   -- `add()`   (N):   now(even x ∧ arg = 2)  →  now(even x ∧ even result)
   have J5 : Judg Mspec Dtable Rc Gc (.call "add") (now φarg) (now φres) Effect.N := by
     refine Judg.conseq (fun _ _ _ h => h) ?_ (fun _ _ _ h => h) (fun _ _ _ h => h)
@@ -560,23 +616,24 @@ theorem client_body_verifies :
     exact ⟨⟨k + 1, by rw [hx, hk, harg, Int.mul_add, Int.mul_one]⟩,
            k + 1, by rw [hres, hx, hk, harg, Int.mul_add, Int.mul_one]⟩
   -- `u = result` (B):   now(even x ∧ even result)  →  now(even x ∧ even u)
-  have J6 : Judg Mspec Dtable Rc Gc (.act (write "u" (fun σ => σ "result")))
+  have J6 : Judg Mspec Dtable Rc Gc (.act (gen (loc "u") (fun t σ => σ (loc "result" t))))
       (now φres) (now φu) Effect.B := by
     refine Judg.conseq (fun _ _ _ h => h) ?_ (fun _ _ _ h => h) (fun _ _ _ h => h)
-      (by decide) (judg_write Dtable Rc Gc (now φres) "u" (fun σ => σ "result") (by decide))
+      (by decide) (judg_gen Dtable Rc Gc (now φres) (loc "u") (fun t σ => σ (loc "result" t))
+        locU_ne_lock)
     rintro t σ0 σ'' ⟨σ', ⟨⟨k, hk⟩, kr, hres⟩, rfl⟩
     refine ⟨⟨k, ?_⟩, kr, ?_⟩
-    · rw [upd_other _ _ _ _ (by decide : ("x":Var) ≠ "u")]; exact hk
-    · rw [upd_same]; exact hres
+    · simp [upd, (locU_ne_x t).symm]; exact hk
+    · simp only [upd_same]; exact hres
   -- `assert even(u)` (B):   now(even x ∧ even u)  →  now(even x)
   --   the `wrong` branch has an empty precondition (even u ∧ ¬even u)
   have J7 : Judg Mspec Dtable Rc Gc (.ite evenCond .skip .wrong)
-      (now φu) (now evenx) Effect.B := by
+      (now φu) (now ex) Effect.B := by
     have hta : Mspec.lift evenCond.tru (now φu) ⊑ Effect.B :=
       Mspec_stpres_le (fun _ _ _ h => h.1) _
     have htf : Mspec.lift evenCond.fls (now φu) ⊑ Effect.B :=
       Mspec_stpres_le (fun _ _ _ h => h.1) _
-    refine Judg.ite (Q := now evenx) (e1 := Effect.B) (e2 := Effect.B) ?_ ?_ ?_
+    refine Judg.ite (Q := now ex) (e1 := Effect.B) (e2 := Effect.B) ?_ ?_ ?_
     · refine Judg.conseq (fun _ _ _ h => h) ?_ (fun _ _ _ h => h) (fun _ _ _ h => h)
         (by decide) Judg.skip
       rintro t σ0 σ'' ⟨σ', ⟨⟨k, hk⟩, _⟩, rfl, _⟩
@@ -588,9 +645,9 @@ theorem client_body_verifies :
     · exact Effect.join_le (le_trans (Effect.seq_mono hta (Effect.le_refl _)) (by decide))
         (le_trans (Effect.seq_mono htf (Effect.le_refl _)) (by decide))
   -- `yield`   (Y):   now(even x)  →  two(even x)   [publish the sequence, reset \old]
-  have J8 : Judg Mspec Dtable Rc Gc .yield (now evenx) (two Sx) Effect.Y := by
+  have J8 : Judg Mspec Dtable Rc Gc .yield (now ex) (two Sx) Effect.Y := by
     refine Judg.conseq (fun _ _ _ h => h) ?_ (fun _ _ _ h => h) (fun _ _ _ h => h)
-      (by decide) (Judg.yield (P := now evenx) now_evenx_imp_evenRely rfl)
+      (by decide) (Judg.yield (P := now ex) now_ex_imp_evenRely rfl)
     rintro t a b ⟨rfl, _σ0, σ, hev, hrtc⟩
     exact ⟨rfl, evenx_stable hrtc hev⟩
   -- assemble:  B;N;Y;B;N;B;B;Y  =  R
@@ -612,13 +669,14 @@ theorem client_def :
 Σ  =  (yield; client()) ‖ (yield; client())  ·  [x := 0, l := free]
 ```
 
-We verify `⊢ Σ` via rule `M-state`.  Every premise is discharged concretely —
-each thread verifies from a yield with `even(x)` holding at the initial store
-`x = 0`, the guarantee is reflexive and published, and the compatibility
-condition holds because both threads share the same rely/guarantee — **except**
-`M is valid`, which is the paper's standing semantic assumption on the mover
-specification (Definition "Validity"); it is checked separately for the concrete
-program actions and taken as a hypothesis here, exactly as the paper assumes it. -/
+Both threads run the same `yield; client()` code, each resolving its locals to
+`loc … tid`.  We verify `⊢ Σ` via rule `M-state`.  Every premise is discharged
+concretely — each thread verifies from a yield with `even(x)` holding at the
+initial store `x = 0`, the guarantee is reflexive and published, and the
+compatibility condition holds because both threads share the same rely/guarantee
+— **except** `M is valid`, the paper's standing semantic assumption on the mover
+specification (Definition "Validity"), taken as a hypothesis here exactly as the
+paper assumes it. -/
 
 /-- The initial store: `x = 0` (even) and the lock `l` free. -/
 def initStore : Store := fun v => if v = LOCK then FREE else 0
@@ -641,10 +699,11 @@ theorem clientThread_verifies :
     exact ⟨rfl, evenx_stable hrtc hev⟩
 
 /-- **`⊢ Σ`** — the two-thread initial state verifies (rule `M-state`), given the
-    paper's standing assumption that the mover specification is valid.  Every
-    other `M-state` premise is discharged concretely here; the `Valid Mspec`
-    hypothesis is genuinely needed and, for this simplified shared-variable model,
-    is in fact *false* — see `Mspec_not_valid` below. -/
+    paper's standing assumption that the mover specification is valid.  Each thread
+    runs the *same* `yield; client()` code, resolving `r`/`arg`/`result`/`u` to its
+    own `loc … tid`.  Every other `M-state` premise is discharged concretely; the
+    `Valid Mspec` hypothesis is genuinely needed and, for this simplified model,
+    still *false* — now because of the shared counter `x` (see `Mspec_not_valid`). -/
 theorem init_state_valid (hV : Valid Mspec) :
     StateValid Mspec Dtable ⟨[clientThread, clientThread], initStore⟩ := by
   refine ⟨Rc, Gc, ?_, hV, ?_, ?_, ?_⟩
@@ -672,49 +731,47 @@ theorem init_state_valid (hV : Valid Mspec) :
   · -- compatibility: both threads share the rely = guarantee = evenRely
     intro t u σ σ' _ h; exact h
 
-/-! ### Is `Mspec` valid?  No — and that exposes the elided thread-locality.
+/-! ### Is `Mspec` valid?  Not quite — the residual gap is the shared counter `x`.
 
-The `Valid Mspec` premise of `init_state_valid` is not vacuous decoration: it is
-genuinely *false* for this simplified model, and provably so.  The reason is
-exactly the thread-locality the model omits.
+With `r`, `arg`, `result`, `u` now genuinely thread-local, the thread-locality
+race is gone.  But `Valid Mspec` (Definition "Validity", quantified over *all*
+actions) is still not provable, and the reason is now the one genuinely shared
+mutable variable: the counter `x`.  In the program every write to `x` is
+performed while holding the lock, so two threads never write `x` concurrently —
+but `Mspec` classifies a write to `x` as a both-mover *unconditionally*, without
+encoding the "only while `m == tid`" side condition of the paper's
+`int x both-mover if m == tid`.  Two *unsynchronized* writes to `x` are therefore
+falsely called both-movers, and validity condition (1) fails.
 
-In the paper, `r`, `arg`, `result`, `u` are thread-local — thread `t` accesses
-`r_t` and thread `u` accesses the *distinct* variable `r_u`.  Different threads
-therefore touch disjoint memory, so their accesses commute and are legitimately
-both-movers.  Here every thread shares the single global `r`, so two threads
-writing `r` genuinely race; such writes are non-movers, and `Mspec` calling them
-both-movers is a *false* mover claim.  Validity condition (1) — a right-mover
-commutes past a following non-mover without changing the store — then fails.
+This still illustrates why the per-thread `Judg` derivations verify: the judgment
+is parametric in `Mspec` and only trusts its mover claims; the one place that
+demands those claims be *true* is `Valid Mspec`.  Fully closing the gap would
+mean making `Mspec` lock-conditional for `x` (a both-mover only when the lock is
+held) and re-proving the reduction commutativity that `Reduction.lean` already
+assumes via `Valid` — a separate axis of faithfulness (the synchronization
+discipline) from the thread-locality fixed here. -/
 
-This is *why* the per-thread `Judg` derivations still go through even though the
-model shares what should be thread-local state: the judgment is parametric in
-`Mspec` and merely trusts its mover claims (`Mspec.lift (write "r" …) P ⊑ B`),
-which hold by definition.  The one place that would demand those claims be *true*
-is `Valid Mspec` — and there the shortcut is caught.  `init_state_valid` is thus
-a real implication whose hypothesis this model cannot satisfy; making it deliver
-an unconditional `⊢ Σ` needs a model with genuinely thread-local variables. -/
-
-/-- **`Mspec` is not valid.**  Witness: two threads write the shared variable `r`
-    (which ought to be the thread-local `r_tid`) to different values.  `Mspec`
-    calls both writes both-movers (`⊑ R` and `⊑ N`), yet they do not commute — so
-    validity condition (1) fails.  This is precisely the thread-locality the
-    concrete model omits, and why `init_state_valid` must *assume* `Valid Mspec`
-    rather than prove it. -/
+/-- **`Mspec` is not valid.**  Witness: two threads write the shared counter `x`
+    (with no lock held) to different values.  `Mspec` calls both writes
+    both-movers (`⊑ R` and `⊑ N`), yet they do not commute — validity condition
+    (1) fails.  The residual gap is the shared `x`, whose writes `Mspec` treats as
+    unconditional both-movers rather than lock-conditional ones; hence
+    `init_state_valid` still *assumes* `Valid Mspec`. -/
 theorem Mspec_not_valid : ¬ Valid Mspec := by
   intro hV
-  -- thread 1 writes r := 1, then thread 2 writes r := 2, from the store `0`
-  have h := hV.right 1 2 (write "r" (fun _ => 1)) (write "r" (fun _ => 2))
-    (fun _ => 0) (upd (fun _ => 0) "r" 1) (upd (upd (fun _ => 0) "r" 1) "r" 2)
+  -- thread 1 writes x := 1, then thread 2 writes x := 2, from the store `0`
+  have h := hV.right 1 2 (gen (fun _ => "x") (fun _ _ => 1)) (gen (fun _ => "x") (fun _ _ => 2))
+    (fun _ => 0) (upd (fun _ => 0) "x" 1) (upd (upd (fun _ => 0) "x" 1) "x" 2)
     (by decide)
-    (le_trans (Mspec_write_all "r" _ (by decide) 1 _) (by decide))
+    (le_trans (Mspec_gen_all x_ne_lock 1 _) (by decide))
     rfl
-    (le_trans (Mspec_write_all "r" _ (by decide) 2 _) (by decide))
+    (le_trans (Mspec_gen_all x_ne_lock 2 _) (by decide))
     rfl
   obtain ⟨σ''', _hA2, hA1⟩ := h
-  -- the "commuted" trace ends with r = 1, but the real trace ends with r = 2
-  have e1 : (upd (upd (fun _ => (0 : Value)) "r" 1) "r" 2) "r" = 1 := by
-    rw [hA1]; exact upd_same σ''' "r" 1
-  have e2 : (upd (upd (fun _ => (0 : Value)) "r" 1) "r" 2) "r" = 2 := upd_same _ "r" 2
+  -- the "commuted" trace ends with x = 1, but the real trace ends with x = 2
+  have e1 : (upd (upd (fun _ => (0 : Value)) "x" 1) "x" 2) "x" = 1 := by
+    rw [hA1]; exact upd_same σ''' "x" 1
+  have e2 : (upd (upd (fun _ => (0 : Value)) "x" 1) "x" 2) "x" = 2 := upd_same _ "x" 2
   rw [e1] at e2
   exact absurd e2 (by decide)
 

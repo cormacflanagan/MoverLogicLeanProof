@@ -314,20 +314,24 @@ Each result is machine-checked with only the three standard axioms (verify with
 `Valid Mspec` as an explicit hypothesis: validity is the semantic side-condition
 the paper *assumes* about a mover specification (Definition "Validity").
 
-**`Mspec` is not actually valid — and that is instructive.** The companion result
-`Mspec_not_valid : ¬ Valid Mspec` proves it, and the witness is exactly the
-paper's thread-locality made concrete: `r`, `arg`, `result`, `u` are thread-local
-in the paper (`r_tid`, …), so different threads touch *disjoint* variables and
-their accesses commute (legitimate both-movers). The concrete model here shares
-those variables across threads, so two threads writing `r` genuinely race —
-non-movers — and `Mspec`'s both-mover claim for them is false, breaking validity
-condition (1). This is *why* the per-thread `Judg` derivations still verify: the
-judgment is parametric in `Mspec` and only trusts its mover claims
-(`Mspec.lift (write "r" …) P ⊑ B`), never re-checking that the variable is
-private; the one place that would demand the claim be *true* is `Valid Mspec`,
-where the shortcut is caught. So `init_state_valid` discharges every structural
-`M-state` premise but rests on a hypothesis this shared-variable model cannot
-satisfy — an unconditional `⊢ Σ` would need genuinely thread-local variables.
+Thread-local variables are modelled faithfully: `r`, `arg`, `result`, `u` are the
+paper's `r_tid`, resolved to `loc "r" t` for the acting thread, so one shared
+`add`/`client` body serves every thread and different threads touch *disjoint*
+locals. Only the counter `x` and lock `l` are shared.
+
+**`Mspec` is still not actually valid — and that is instructive.** The companion
+result `Mspec_not_valid : ¬ Valid Mspec` proves it. With thread-locality now in
+place, the witness is the one genuinely shared mutable variable, the counter `x`:
+two threads writing `x` with no lock held do not commute, yet `Mspec` calls both
+writes both-movers — because it does not encode the paper's `both-mover if
+m == tid` side condition. Validity condition (1) fails. This is *why* the
+per-thread `Judg` derivations still verify: the judgment is parametric in `Mspec`
+and only trusts its mover claims, never re-checking synchronization; the one place
+that would demand the claim be *true* is `Valid Mspec`, where the gap shows. So
+`init_state_valid` discharges every structural `M-state` premise but rests on a
+hypothesis this model cannot satisfy — closing it fully means a lock-conditional
+spec for `x` plus the reduction commutativity `Reduction.lean` already assumes via
+`Valid` (a separate axis of faithfulness from the thread-locality shown here).
 
 ## Status
 
