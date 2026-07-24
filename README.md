@@ -42,6 +42,7 @@ theorem** (`Reduction` → `ReductionThm` → `PostCommit` → `Assembly`).
 | `MoverLogic/Preservation.lean` | Thm thm:pres + Lemmas lem:yield-stable / lem:ctxt-switch / lem:pres-redex | The **complete Preservation proof**: Yield Stabilization, Context Switch, Preservation for Redexes (fused with the Evaluation Context rebuild), and **`preservation`** / `preservation_star` |
 | `MoverLogic/Examples.lean` | Figs. 3, 5, 7 (the examples) | **Worked `Judg` derivations for the paper's examples** against a concrete mover spec and concrete actions (spin lock, the `add()`/`client()` counter, the initial state); see "Worked example derivations" below |
 | `MoverLogic/ValidSpec.lean` | Def. "Validity" | **A concrete, sync-disciplined mover spec proved *valid outright*** (`MspecV_valid : Valid MspecV`, no hypothesis) — see "A provably-valid mover specification" below |
+| `MoverLogic/ValidSpecExamples.lean` | Figs. 3, 5, 7 + Def. "Validity" | **The paper's examples re-verified against the *proved-valid* `MspecV`** — spin lock, the `add()`/`client()` counter (real read-modify-write of the shared `x` through thread-local `r`/`arg`/`result`), and `⊢ Σ` with **no validity assumption** (`client_state_valid`) |
 
 ## What is proved
 
@@ -334,6 +335,12 @@ hypothesis this model cannot satisfy — closing it fully means a lock-condition
 spec for `x` plus the reduction commutativity `Reduction.lean` already assumes via
 `Valid` (a separate axis of faithfulness from the thread-locality shown here).
 
+**This gap is now closed** in `ValidSpecExamples.lean`: the same faithful
+derivations are re-run against the **proved-valid** `MspecV`, whose `x`-accesses are
+lock-conditional both-movers exactly as the paper prescribes. There the state
+theorem `client_state_valid` needs *no* validity hypothesis — `Valid MspecV` is the
+theorem `MspecV_valid`. See "A provably-valid mover specification" below.
+
 ## A provably-valid mover specification
 
 The `Examples.lean` state theorem `init_state_valid` takes `Valid Mspec` as a
@@ -384,15 +391,27 @@ disciplined actions carry the paper's mover annotations: `MspecV_acquire_le` (`R
 - `acqRel_state_valid` verifies a two-thread lock round-trip
   (`yield; acquire; release; yield`), exercising the total store-dependent release
   at effect `L`.
-- `client_state_valid` verifies a **faithful critical section**: two threads each
-  running `yield; acquire; x := x+1; release; yield`. The total `x`-write is used at
-  effect `B` and the release at `L`, both both/left-movers *because the lock is
-  held* there — the paper's `add()`/`client()` counter, machine-checked against a
-  mover spec that is *proved valid*, with the sync discipline on `x` enforced.
+- `ValidSpec.client_state_valid` verifies a streamlined critical section: two
+  threads each running `yield; acquire; x := x+1; release; yield`. The total
+  `x`-write is used at effect `B` and the release at `L`, both both/left-movers
+  *because the lock is held* there.
 
-The hard, previously-only-assumed part — that a concrete, sync-disciplined mover
-spec *is valid*, and that a faithful lock-protected shared-counter state verifies
-against it — is done and machine-checked.
+**The paper's full example, against the valid spec.** `ValidSpecExamples.lean`
+closes the last gap: it re-runs the *faithful* derivations of `Examples.lean` — the
+spin lock, the `add()` body doing a real **read-modify-write** of the shared counter
+`x` through thread-local `r`/`arg`/`result`, the non-atomic `client()` with its two
+`add()` calls and `even(x)` assertion, and the whole two-thread initial state —
+against the **proved-valid** `MspecV` instead of an assumed one. The headline is
+`ValidSpecExamples.client_state_valid : StateValid MspecV Dtable Σ` for
+`(yield; client()) ‖ (yield; client())`, with **`Valid MspecV` discharged by
+`MspecV_valid`, not assumed** (`#print axioms` = the three standard axioms). Thread
+locality is `MspecV`'s own leading-`'A'` ownership (`r_tid = A^(t+1) ++ "r"`), and
+each `x`-access is a both-mover *only while the lock is held* — the discipline the
+`add()` derivation threads from its own `acquire` through to its `release`.
+
+The hard, previously-only-assumed parts — that a concrete, sync-disciplined mover
+spec *is valid*, and that the paper's motivating example verifies against it with no
+validity assumption — are done and machine-checked.
 
 ## Status
 
@@ -403,4 +422,6 @@ Preservation (`preservation`). The entire soundness chain is assembled, and
 
 The paper's **examples** (spin lock, the `add()`/`client()` counter, the initial
 state) are given explicit machine-checked derivations in `Examples.lean` — see
-"Worked example derivations" above.
+"Worked example derivations" above — and, in `ValidSpecExamples.lean`, re-verified
+against the **proved-valid** `MspecV` with **no validity assumption**, so the
+motivating example is now sound end to end (`client_state_valid`).

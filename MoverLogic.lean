@@ -22,6 +22,12 @@
                               judgments against it: a lock round-trip and a
                               faithful `x++`-under-lock critical section
                               (`acqRel_state_valid`, `client_state_valid`)
+    * `MoverLogic.ValidSpecExamples`
+                            — the paper's examples (spin lock, the `add()`/
+                              `client()` counter with thread-local `r`/`arg`/
+                              `result`, the initial state) re-verified against the
+                              *proved-valid* `MspecV`, with **no validity
+                              assumption** (`client_state_valid`)
 -/
 import MoverLogic.Effects
 import MoverLogic.Language
@@ -38,3 +44,4 @@ import MoverLogic.PostCommit
 import MoverLogic.Assembly
 import MoverLogic.Examples
 import MoverLogic.ValidSpec
+import MoverLogic.ValidSpecExamples
