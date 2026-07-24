@@ -16,6 +16,9 @@
     * `MoverLogic.Examples` — worked `Judg` derivations for the paper's examples
                               (spin lock, the `add()`/`client()` counter, the
                               initial state), against a concrete mover spec
+    * `MoverLogic.ValidSpec` — a sync-disciplined mover spec proved *valid*
+                              outright (`MspecV_valid : Valid MspecV`, no
+                              assumption)
 -/
 import MoverLogic.Effects
 import MoverLogic.Language

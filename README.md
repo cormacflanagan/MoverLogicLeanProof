@@ -41,6 +41,7 @@ theorem** (`Reduction` → `ReductionThm` → `PostCommit` → `Assembly`).
 | `MoverLogic/Instrumented.lean` | §"Overview of Correctness Proof" | The **soundness chain**: instrumented semantics, non-preemptive scheduler, `⊢ Π`, Simulation, `embed` (Reduction and the assembled Soundness are proved in `Assembly.lean`) |
 | `MoverLogic/Preservation.lean` | Thm thm:pres + Lemmas lem:yield-stable / lem:ctxt-switch / lem:pres-redex | The **complete Preservation proof**: Yield Stabilization, Context Switch, Preservation for Redexes (fused with the Evaluation Context rebuild), and **`preservation`** / `preservation_star` |
 | `MoverLogic/Examples.lean` | Figs. 3, 5, 7 (the examples) | **Worked `Judg` derivations for the paper's examples** against a concrete mover spec and concrete actions (spin lock, the `add()`/`client()` counter, the initial state); see "Worked example derivations" below |
+| `MoverLogic/ValidSpec.lean` | Def. "Validity" | **A concrete, sync-disciplined mover spec proved *valid outright*** (`MspecV_valid : Valid MspecV`, no hypothesis) — see "A provably-valid mover specification" below |
 
 ## What is proved
 
@@ -332,6 +333,46 @@ that would demand the claim be *true* is `Valid Mspec`, where the gap shows. So
 hypothesis this model cannot satisfy — closing it fully means a lock-conditional
 spec for `x` plus the reduction commutativity `Reduction.lean` already assumes via
 `Valid` (a separate axis of faithfulness from the thread-locality shown here).
+
+## A provably-valid mover specification
+
+The `Examples.lean` state theorem `init_state_valid` takes `Valid Mspec` as a
+hypothesis, because the simplified `Mspec` there is not actually valid (it treats
+the shared `x` as an unconditional both-mover). `ValidSpec.lean` closes that gap:
+it defines a **sync-disciplined mover specification `MspecV` and proves it valid
+outright** — `MspecV_valid : Valid MspecV`, with **no assumption**, using only the
+three standard axioms (`#print axioms MspecV_valid`). This is a concrete discharge
+of Definition "Validity" (the four Lipton-style commutativity conditions), which
+the soundness development otherwise takes as given.
+
+The design:
+
+- **Classification is by action *shape*, store-independently** (acquire → `R`,
+  release → `L`, a local write → `B`, a lock-protected `x`-access → `B`, a test
+  reading only owned state → `B`, everything else → error `E`). Making the effect
+  independent of the current store is what makes validity condition (3) — one
+  thread's step cannot change another's mover effect — immediate.
+- **Ownership is by a leading-`'A'` run**: thread `t` owns the variables whose name
+  begins with `t+1` copies of `'A'`. Because the run length is a *function* of the
+  name, different threads own **disjoint** sets for free (`owns_disjoint`); `x` and
+  the lock `l` are owned by no one.
+- **The sync discipline on `x`**: an `x`-access is a both-mover *because the action
+  itself holds the lock* (`IsXacc` / `xWrite_isXacc`); an unsynchronized `x`-access
+  is not one of the mover shapes, so it is `E` (an error the logic rejects). This is
+  exactly the paper's `int x both-mover if m == tid`, made enforceable.
+
+Conditions (1), (2), (4) are discharged by a single commutation atom —
+**confined actions over disjoint regions commute** (`confined_comm`) — together
+with guard-conflict vacuity when two threads contend for the lock or `x` (the
+second contender is provably blocked). Against this valid spec the disciplined
+actions carry the paper's mover annotations: `MspecV_acquire_le` (`R`),
+`MspecV_release_le` (`L`), `xWrite_isXacc` (`B`).
+
+What remains to make the *client* state's `⊢ Σ` unconditional is mechanical: port
+the `add()`/`client()` derivations of `Examples.lean` onto `MspecV`'s variable
+encoding (leading-`'A'` locals) and lock-guarded `x`-writes, then plug
+`MspecV_valid` into `M-state` in place of the hypothesis. The hard part — that a
+concrete, sync-disciplined mover spec *is valid* — is done.
 
 ## Status
 
