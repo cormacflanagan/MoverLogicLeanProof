@@ -1,4 +1,4 @@
-# Mover Logic in Lean 4
+# Mover Logic in Lean 4.
 
 A self-contained Lean 4 formalization of the program logic from
 **"Mover Logic: A Concurrent Program Logic for Reduction and Rely-Guarantee
