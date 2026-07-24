@@ -312,11 +312,22 @@ a `free = -1` / `held = tid` encoding, which makes the classification total.
 Each result is machine-checked with only the three standard axioms (verify with
 `#print axioms client_body_verifies`, etc.). The `init_state_valid` theorem takes
 `Valid Mspec` as an explicit hypothesis: validity is the semantic side-condition
-the paper *assumes* about a mover specification (Definition "Validity"), checked
-separately for the concrete program actions — the simplified `Mspec` here
-classifies *arbitrary* actions by their lock behaviour, so it is not valid in that
-full generality, and the assumption is stated rather than proved, exactly as the
-paper assumes it.
+the paper *assumes* about a mover specification (Definition "Validity").
+
+**`Mspec` is not actually valid — and that is instructive.** The companion result
+`Mspec_not_valid : ¬ Valid Mspec` proves it, and the witness is exactly the
+paper's thread-locality made concrete: `r`, `arg`, `result`, `u` are thread-local
+in the paper (`r_tid`, …), so different threads touch *disjoint* variables and
+their accesses commute (legitimate both-movers). The concrete model here shares
+those variables across threads, so two threads writing `r` genuinely race —
+non-movers — and `Mspec`'s both-mover claim for them is false, breaking validity
+condition (1). This is *why* the per-thread `Judg` derivations still verify: the
+judgment is parametric in `Mspec` and only trusts its mover claims
+(`Mspec.lift (write "r" …) P ⊑ B`), never re-checking that the variable is
+private; the one place that would demand the claim be *true* is `Valid Mspec`,
+where the shortcut is caught. So `init_state_valid` discharges every structural
+`M-state` premise but rests on a hypothesis this shared-variable model cannot
+satisfy — an unconditional `⊢ Σ` would need genuinely thread-local variables.
 
 ## Status
 

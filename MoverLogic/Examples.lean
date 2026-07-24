@@ -641,7 +641,10 @@ theorem clientThread_verifies :
     exact ⟨rfl, evenx_stable hrtc hev⟩
 
 /-- **`⊢ Σ`** — the two-thread initial state verifies (rule `M-state`), given the
-    paper's standing assumption that the mover specification is valid. -/
+    paper's standing assumption that the mover specification is valid.  Every
+    other `M-state` premise is discharged concretely here; the `Valid Mspec`
+    hypothesis is genuinely needed and, for this simplified shared-variable model,
+    is in fact *false* — see `Mspec_not_valid` below. -/
 theorem init_state_valid (hV : Valid Mspec) :
     StateValid Mspec Dtable ⟨[clientThread, clientThread], initStore⟩ := by
   refine ⟨Rc, Gc, ?_, hV, ?_, ?_, ?_⟩
@@ -668,6 +671,52 @@ theorem init_state_valid (hV : Valid Mspec) :
     · exact ⟨rfl, hx0⟩
   · -- compatibility: both threads share the rely = guarantee = evenRely
     intro t u σ σ' _ h; exact h
+
+/-! ### Is `Mspec` valid?  No — and that exposes the elided thread-locality.
+
+The `Valid Mspec` premise of `init_state_valid` is not vacuous decoration: it is
+genuinely *false* for this simplified model, and provably so.  The reason is
+exactly the thread-locality the model omits.
+
+In the paper, `r`, `arg`, `result`, `u` are thread-local — thread `t` accesses
+`r_t` and thread `u` accesses the *distinct* variable `r_u`.  Different threads
+therefore touch disjoint memory, so their accesses commute and are legitimately
+both-movers.  Here every thread shares the single global `r`, so two threads
+writing `r` genuinely race; such writes are non-movers, and `Mspec` calling them
+both-movers is a *false* mover claim.  Validity condition (1) — a right-mover
+commutes past a following non-mover without changing the store — then fails.
+
+This is *why* the per-thread `Judg` derivations still go through even though the
+model shares what should be thread-local state: the judgment is parametric in
+`Mspec` and merely trusts its mover claims (`Mspec.lift (write "r" …) P ⊑ B`),
+which hold by definition.  The one place that would demand those claims be *true*
+is `Valid Mspec` — and there the shortcut is caught.  `init_state_valid` is thus
+a real implication whose hypothesis this model cannot satisfy; making it deliver
+an unconditional `⊢ Σ` needs a model with genuinely thread-local variables. -/
+
+/-- **`Mspec` is not valid.**  Witness: two threads write the shared variable `r`
+    (which ought to be the thread-local `r_tid`) to different values.  `Mspec`
+    calls both writes both-movers (`⊑ R` and `⊑ N`), yet they do not commute — so
+    validity condition (1) fails.  This is precisely the thread-locality the
+    concrete model omits, and why `init_state_valid` must *assume* `Valid Mspec`
+    rather than prove it. -/
+theorem Mspec_not_valid : ¬ Valid Mspec := by
+  intro hV
+  -- thread 1 writes r := 1, then thread 2 writes r := 2, from the store `0`
+  have h := hV.right 1 2 (write "r" (fun _ => 1)) (write "r" (fun _ => 2))
+    (fun _ => 0) (upd (fun _ => 0) "r" 1) (upd (upd (fun _ => 0) "r" 1) "r" 2)
+    (by decide)
+    (le_trans (Mspec_write_all "r" _ (by decide) 1 _) (by decide))
+    rfl
+    (le_trans (Mspec_write_all "r" _ (by decide) 2 _) (by decide))
+    rfl
+  obtain ⟨σ''', _hA2, hA1⟩ := h
+  -- the "commuted" trace ends with r = 1, but the real trace ends with r = 2
+  have e1 : (upd (upd (fun _ => (0 : Value)) "r" 1) "r" 2) "r" = 1 := by
+    rw [hA1]; exact upd_same σ''' "r" 1
+  have e2 : (upd (upd (fun _ => (0 : Value)) "r" 1) "r" 2) "r" = 2 := upd_same _ "r" 2
+  rw [e1] at e2
+  exact absurd e2 (by decide)
 
 end Examples
 end MoverLogic
